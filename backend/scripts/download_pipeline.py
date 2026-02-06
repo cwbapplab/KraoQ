@@ -70,8 +70,12 @@ def download_and_process(video_id, output_dir):
     # We use video_id to avoid collision
     output_template = os.path.join(output_dir, f"%(title)s-{video_id}.%(ext)s")
     
-    # Point to the ffmpeg executable in the UVR installation
-    ffmpeg_location = r".\AppData\Local\Programs\Ultimate Vocal Remover\ffmpeg.exe"
+    # Detect ffmpeg location (Fix for Docker/Linux vs local Windows)
+    ffmpeg_location = None
+    if os.name == 'nt': # Windows
+        local_uvr_ffmpeg = r".\AppData\Local\Programs\Ultimate Vocal Remover\ffmpeg.exe"
+        if os.path.exists(local_uvr_ffmpeg):
+            ffmpeg_location = local_uvr_ffmpeg
 
     class MyLogger(object):
         def debug(self, msg):
@@ -83,7 +87,6 @@ def download_and_process(video_id, output_dir):
 
     ydl_opts = {
         'format': 'bestaudio/best',
-        'ffmpeg_location': ffmpeg_location,
         'writesubtitles': True,
         'subtitlesformat': 'lrc',
         'postprocessors': [{
@@ -100,6 +103,9 @@ def download_and_process(video_id, output_dir):
         'noprogress': True,
         'logger': MyLogger(),
     }
+
+    if ffmpeg_location:
+        ydl_opts['ffmpeg_location'] = ffmpeg_location
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

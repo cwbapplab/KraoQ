@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API_URL = "http://127.0.0.1:3001";
+const API_URL = "http://localhost:3001";
 
 export function useAuth() {
     const [user, setUser] = useState(null);
@@ -67,7 +67,7 @@ export function useAuth() {
             return data.user;
         } catch (err) {
             console.error("Registration Fetch Error:", err);
-            setError(`Network Error: ${err.message}`);
+            setError(err.message);
             throw err;
         }
     };

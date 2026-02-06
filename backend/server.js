@@ -7,6 +7,8 @@ const cors = require('cors');
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
 const passport = require('./auth');
+const FormData = require('form-data');
+const axios = require('axios');
 
 const mongoose = require('mongoose');
 const User = require('./models/User');
@@ -35,11 +37,11 @@ if (!fs.existsSync(uploadDir)) {
 // Middleware
 app.use(cors({
     origin: function (origin, callback) {
-        // console.log(`[CORS] Request from origin: ${origin}`);
-        if (!origin || origin === 'null' || origin.startsWith('tauri://') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
-            callback(null, true);
+        // Echo the origin if it matches our dev patterns
+        if (!origin || origin.startsWith('tauri://') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+            callback(null, origin || true);
         } else {
-            callback(null, true); // Allow all for now, but logged
+            callback(null, true);
         }
     },
     credentials: true
@@ -55,8 +57,9 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: process.env.NODE_ENV === 'production', // true if https
-        maxAge: 24 * 60 * 60 * 1000
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 24 * 60 * 60 * 1000,
+        sameSite: 'lax'
     }
 }));
 app.use(passport.initialize());
@@ -296,50 +299,70 @@ function saveCache() {
 
 // Helper to call external Audio Processor Service
 async function callAudioProcessorService(audioPath, outputDir) {
-    const secretsLocations = [
-        process.env.SECRETS_PATH,
-        '/kraoq_secrets.json', // Docker root (parent of /app)
-        path.join(__dirname, '..', 'kraoq_secrets.json') // Local dev
-    ];
+    const apiKey = process.env.AUDIO_PROCESSOR_API_KEY || "CHANGE_ME_KEY";
+    const processorUrl = process.env.AUDIO_PROCESSOR_URL || 'http://localhost:3002';
 
-    let apiKey = "CHANGE_ME_KEY";
-
-    for (const loc of secretsLocations) {
-        if (loc && fs.existsSync(loc)) {
-            try {
-                apiKey = JSON.parse(fs.readFileSync(loc, 'utf8')).AUDIO_PROCESSOR_API_KEY;
-                break;
-            } catch (e) {
-                console.error(`Failed to parse secrets from ${loc}`, e);
-            }
-        }
+    console.log(`[Backend] Streaming file to processor via Axios: ${audioPath}`);
+    if (!fs.existsSync(audioPath)) {
+        throw new Error(`File not found at ${audioPath}`);
     }
 
-    const processorUrl = process.env.AUDIO_PROCESSOR_URL || 'http://localhost:3002';
-    const response = await fetch(`${processorUrl}/separate`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        },
-        body: JSON.stringify({
-            audioPath,
-            outputDir,
-            modelName: "UVR-MDX-NET-Inst_HQ_5.onnx"
-        })
+    const form = new FormData();
+    form.append('audio', fs.createReadStream(audioPath));
+    form.append('modelName', "UVR-MDX-NET-Inst_HQ_5.onnx");
+
+    const getLength = () => new Promise((resolve, reject) => {
+        form.getLength((err, length) => {
+            if (err) reject(err);
+            else resolve(length);
+        });
     });
 
-    if (!response.ok) {
-        let errMsg = 'Service request failed';
-        try {
-            const errData = await response.json();
-            errMsg = errData.error || errMsg;
-        } catch (e) { }
+    try {
+        const length = await getLength();
+        console.log(`[Backend] Content Length: ${length}`);
+
+        const response = await axios.post(`${processorUrl}/separate`, form, {
+            headers: {
+                ...form.getHeaders(),
+                'x-api-key': apiKey,
+                'Content-Length': length
+            },
+            responseType: 'stream',
+            // Increase timeout for long processing
+            timeout: 600000,
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity
+        });
+
+        const contentDisposition = response.headers['content-disposition'];
+        let filename = `instrumental_${Date.now()}.mp3`;
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename="(.+)"/);
+            if (match) filename = match[1];
+        }
+
+        const finalPath = path.join(outputDir, filename);
+        const fileStream = fs.createWriteStream(finalPath);
+
+        return new Promise((resolve, reject) => {
+            response.data.pipe(fileStream);
+            fileStream.on('finish', () => {
+                console.log(`[Backend] Processed file saved to: ${finalPath}`);
+                resolve({ instrumental: finalPath });
+            });
+            fileStream.on('error', reject);
+            response.data.on('error', reject);
+        });
+    } catch (err) {
+        let errMsg = err.message;
+        if (err.response && err.response.data) {
+            // Since responseType is stream, we'd need to read the stream to see the error JSON
+            // For now, just report the status
+            errMsg = `Service Error: ${err.response.status}`;
+        }
         throw new Error(errMsg);
     }
-
-    const json = await response.json();
-    return json.data;
 }
 
 app.post('/api/process-yt', isAuthenticated, async (req, res) => {

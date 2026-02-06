@@ -51,11 +51,12 @@ spec:
             secretKeyRef:
               name: kraoq-secrets
               key: session-secret
+        - name: AUDIO_PROCESSOR_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: audio-processor-api-key
         volumeMounts:
-        - name: secrets-volume
-          mountPath: /app/kraoq_secrets.json
-          subPath: kraoq_secrets.json
-          readOnly: true
         - name: data-volume
           mountPath: /app/uploads
           subPath: uploads
@@ -63,9 +64,6 @@ spec:
           mountPath: /app/cache.json
           subPath: cache.json
       volumes:
-      - name: secrets-volume
-        secret:
-          secretName: kraoq-secrets
       - name: data-volume
         persistentVolumeClaim:
           claimName: kraoq-backend-pvc

@@ -5,7 +5,7 @@ import AuroraBackground from './components/AuroraBackground';
 import AuthModal from './components/AuthModal';
 import { useAuth } from './hooks/useAuth';
 
-const API_URL = "http://127.0.0.1:3001";
+const API_URL = "http://localhost:3001";
 
 function App() {
     const [query, setQuery] = useState("");
@@ -36,6 +36,22 @@ function App() {
     const headerRef = useRef(null);
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
+    // Global 401 Interceptor
+    useEffect(() => {
+        const { fetch: originalFetch } = window;
+        window.fetch = async (...args) => {
+            const response = await originalFetch(...args);
+            if (response.status === 401) {
+                // If unauthorized, show login modal and ensure user state is cleared
+                setShowLoginModal(true);
+                setUser(null);
+            }
+            return response;
+        };
+        return () => {
+            window.fetch = originalFetch;
+        };
+    }, [setUser]);
 
     // ... existing refs and effects ...
 
@@ -280,8 +296,7 @@ function App() {
             });
 
             if (res.status === 401) {
-                // Redirect to Login
-                window.location.href = `${API_URL}/auth/google`;
+                setShowLoginModal(true);
                 return;
             }
 

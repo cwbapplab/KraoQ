@@ -87,18 +87,14 @@ The Cloud-init script installed K3s and ArgoCD.
     3.  Commit and push these changes.
     4.  Apply the manifests:
     ```bash
-    # 1. Prepare Secrets File (Audio Processor API Key)
-    # The Backend expects this JSON structure
-    echo '{"AUDIO_PROCESSOR_API_KEY": "your_secure_api_key_here"}' > kraoq_secrets.json
-
-    # 2. Create Kubernetes Secret
+    # 1. Create Kubernetes Secret
     kubectl create secret generic kraoq-secrets \
       --from-literal=mongo-root-username=admin \
       --from-literal=mongo-root-password=YourSecureMongoPassword123 \
       --from-literal=google-client-id=YOUR_GOOGLE_CLIENT_ID \
       --from-literal=google-client-secret=YOUR_GOOGLE_CLIENT_SECRET \
       --from-literal=session-secret=MakeThisALongRandomString \
-      --from-file=kraoq_secrets.json=kraoq_secrets.json
+      --from-literal=audio-processor-api-key=your_secure_api_key_here
       
     # 3. Create Storage for Uploads and Ingress
     kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/backend/pvc.yaml
@@ -117,7 +113,7 @@ The following sensitive credentials must be managed manually (either via the K8s
 | :--- | :--- | :--- |
 | **MongoDB Root User** | `mongo-root-username` | Database Admin User |
 | **MongoDB Root Pass** | `mongo-root-password` | Database Admin Password |
-| **Audio Processor Key** | `kraoq_secrets.json` | API Key to authenticate with your home Audio Processor |
+| **Audio Processor Key** | `audio-processor-api-key` | API Key to authenticate with your home Audio Processor |
 | **Google Client ID** | `google-client-id` | OAuth 2.0 Client ID for Login |
 | **Google Client Secret** | `google-client-secret` | OAuth 2.0 Client Secret for Login |
 | **Session Secret** | `session-secret` | Key to sign session cookies |

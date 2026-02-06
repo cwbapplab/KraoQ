@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Mail, Lock, User, Github, Chrome, Loader2, ArrowRight } from 'lucide-react';
 
-const API_URL = "http://127.0.0.1:3001";
+const API_URL = "http://localhost:3001";
 
 const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, setError }) => {
     const [mode, setMode] = useState('login'); // 'login' or 'register'
