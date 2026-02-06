@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kraoq-mongo
+  namespace: kraoq
+  labels:
+    app: kraoq-mongo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kraoq-mongo
+  template:
+    metadata:
+      labels:
+        app: kraoq-mongo
+    spec:
+      containers:
+      - name: mongo
+        image: mongo:6.0
+        ports:
+        - containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: mongo-root-username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: mongo-root-password
+        volumeMounts:
+        - name: mongo-data
+          mountPath: /data/db
+      volumes:
+      - name: mongo-data
+        persistentVolumeClaim:
+          claimName: kraoq-mongo-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kraoq-mongo-service
+  namespace: kraoq
+  labels:
+    app: kraoq-mongo
+spec:
+  ports:
+  - port: 27017
+    targetPort: 27017
+  selector:
+    app: kraoq-mongo
+  type: ClusterIP

@@ -5,7 +5,8 @@ import traceback
 import logging
 
 # Configure basic logging to ensuring we catch everything
-LOG_FILE = r".\backend\debug_separate_v2.log"
+# Adjusted path for new location
+LOG_FILE = r".\audio-processor\debug_separate_service.log"
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -15,8 +16,6 @@ logging.basicConfig(
 
 def log(msg):
     logging.info(msg)
-    # Also print to stderr for immediate feedback if needed, but keep stdout clean for JSON
-    # sys.stderr.write(msg + "\n")
 
 def add_nvidia_paths():
     paths_to_add = []

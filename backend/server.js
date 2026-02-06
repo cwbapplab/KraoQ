@@ -179,6 +179,54 @@ function saveCache() {
     }
 }
 
+// Helper to call external Audio Processor Service
+async function callAudioProcessorService(audioPath, outputDir) {
+    const secretsLocations = [
+        process.env.SECRETS_PATH,
+        '/kraoq_secrets.json', // Docker root (parent of /app)
+        path.join(__dirname, '..', 'kraoq_secrets.json') // Local dev
+    ];
+
+    let apiKey = "CHANGE_ME_KEY";
+
+    for (const loc of secretsLocations) {
+        if (loc && fs.existsSync(loc)) {
+            try {
+                apiKey = JSON.parse(fs.readFileSync(loc, 'utf8')).AUDIO_PROCESSOR_API_KEY;
+                break;
+            } catch (e) {
+                console.error(`Failed to parse secrets from ${loc}`, e);
+            }
+        }
+    }
+
+    const processorUrl = process.env.AUDIO_PROCESSOR_URL || 'http://localhost:3002';
+    const response = await fetch(`${processorUrl}/separate`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey
+        },
+        body: JSON.stringify({
+            audioPath,
+            outputDir,
+            modelName: "UVR-MDX-NET-Inst_HQ_5.onnx"
+        })
+    });
+
+    if (!response.ok) {
+        let errMsg = 'Service request failed';
+        try {
+            const errData = await response.json();
+            errMsg = errData.error || errMsg;
+        } catch (e) { }
+        throw new Error(errMsg);
+    }
+
+    const json = await response.json();
+    return json.data;
+}
+
 app.post('/api/process-yt', async (req, res) => {
     const { videoId } = req.body;
     if (!videoId) return res.status(400).json({ error: 'Video ID required' });
@@ -248,10 +296,10 @@ app.post('/api/process-yt', async (req, res) => {
         console.log(`Lyrics: ${lrc_path}`);
 
         // Step 2: Separation (Instrumental Only)
-        // We still run separation to get the instrumental track for the Karaoke experience.
-        console.log("Step 2: Separating Instrumental...");
-        const sepOutput = await runPythonHelper('separate.py', [mp3_path, uploadDir, "UVR-MDX-NET-Inst_HQ_5.onnx"]);
-        const sepResult = safeParseJSON(sepOutput);
+        // We run separation via the external Microservice
+        console.log("Step 2: Separating Instrumental via Audio-Processor Service...");
+
+        const sepResult = await callAudioProcessorService(mp3_path, uploadDir);
 
         // Step 3: Transcription (SKIPPED/DISABLED)
         // We use the downloaded lyrics instead.

@@ -1,1 +1,4 @@
-faster-whisper
+yt-dlp
+ytmusicapi
+requests
+mutagen
