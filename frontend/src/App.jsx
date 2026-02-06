@@ -5,7 +5,7 @@ import AuroraBackground from './components/AuroraBackground';
 import AuthModal from './components/AuthModal';
 import { useAuth } from './hooks/useAuth';
 
-const API_URL = "http://localhost:3001";
+const API_URL = "http://127.0.0.1:3001";
 
 function App() {
     const [query, setQuery] = useState("");
@@ -39,7 +39,7 @@ function App() {
 
     // ... existing refs and effects ...
 
-    // ... existing code ...
+
 
 
 
@@ -567,9 +567,9 @@ function App() {
                 <div className="absolute top-4 right-4 z-50 animate-in fade-in duration-700">
                     {user ? (
                         <div className="flex items-center gap-3 bg-black/30 backdrop-blur-md p-2 pl-4 rounded-full border border-white/10 hover:border-primary/50 transition-colors">
-                            <span className="text-sm font-medium text-white hidden sm:block">{user.displayName || user.name?.givenName || "User"}</span>
-                            {user.photos && user.photos[0] ? (
-                                <img src={user.photos[0].value} alt="Profile" className="w-8 h-8 rounded-full border border-white/20" />
+                            <span className="text-sm font-medium text-white hidden sm:block">{user.displayName || "User"}</span>
+                            {user.profilePicture ? (
+                                <img src={user.profilePicture} alt="Profile" className="w-8 h-8 rounded-full border border-white/20" />
                             ) : (
                                 <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30">
                                     <User size={16} className="text-primary" />

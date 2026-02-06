@@ -22,7 +22,7 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 passport.use(new LocalStrategy(
   async function (username, password, done) {
     try {
-      const user = await User.findOne({ username: username });
+      const user = await User.findOne({ username: username.toLowerCase() });
       if (!user) {
         return done(null, false, { message: 'Incorrect username.' });
       }
@@ -51,12 +51,19 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     async function (accessToken, refreshToken, profile, cb) {
       try {
         let user = await User.findOne({ googleId: profile.id });
+        const photoUrl = profile.photos && profile.photos[0] ? profile.photos[0].value : null;
+
         if (!user) {
           user = new User({
             googleId: profile.id,
             displayName: profile.displayName,
-            // username is optional/sparse now
+            profilePicture: photoUrl
           });
+          await user.save();
+        } else {
+          // Update profile picture and name if they changed
+          user.profilePicture = photoUrl;
+          user.displayName = profile.displayName;
           await user.save();
         }
         return cb(null, user);

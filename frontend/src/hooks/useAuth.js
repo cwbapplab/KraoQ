@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const API_URL = "http://localhost:3001";
+const API_URL = "http://127.0.0.1:3001";
 
 export function useAuth() {
     const [user, setUser] = useState(null);
@@ -36,7 +36,10 @@ export function useAuth() {
                 body: JSON.stringify({ username, password }),
                 credentials: 'include'
             });
-            const data = await res.json();
+
+            const isJson = res.headers.get('content-type')?.includes('application/json');
+            const data = isJson ? await res.json() : { error: await res.text() };
+
             if (!res.ok) throw new Error(data.message || data.error || "Login failed");
             setUser(data.user);
             return data.user;
@@ -55,12 +58,16 @@ export function useAuth() {
                 body: JSON.stringify({ username, password, displayName }),
                 credentials: 'include'
             });
-            const data = await res.json();
+
+            const isJson = res.headers.get('content-type')?.includes('application/json');
+            const data = isJson ? await res.json() : { error: await res.text() };
+
             if (!res.ok) throw new Error(data.message || data.error || "Registration failed");
             setUser(data.user);
             return data.user;
         } catch (err) {
-            setError(err.message);
+            console.error("Registration Fetch Error:", err);
+            setError(`Network Error: ${err.message}`);
             throw err;
         }
     };

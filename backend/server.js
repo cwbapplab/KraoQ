@@ -34,7 +34,14 @@ if (!fs.existsSync(uploadDir)) {
 
 // Middleware
 app.use(cors({
-    origin: true, // Allow all origins for now (or configured via env), required for credentials
+    origin: function (origin, callback) {
+        // console.log(`[CORS] Request from origin: ${origin}`);
+        if (!origin || origin === 'null' || origin.startsWith('tauri://') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+            callback(null, true);
+        } else {
+            callback(null, true); // Allow all for now, but logged
+        }
+    },
     credentials: true
 }));
 app.use(express.json());
@@ -57,9 +64,9 @@ app.use(passport.session());
 
 // Auth Guard Middleware
 const isAuthenticated = (req, res, next) => {
-    console.log(`[AUTH CHECK] Path: ${req.path}, Authenticated: ${req.isAuthenticated()}`);
+    // console.log(`[AUTH CHECK] Path: ${req.path}, Authenticated: ${req.isAuthenticated()}`);
     if (req.isAuthenticated()) return next();
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ error: 'Unauthorized', message: 'Please log in to continue' });
 };
 
 // ... helpers ...
@@ -133,23 +140,50 @@ function parseLRC(lrcContent) {
 
 // AUTH ROUTES
 app.post('/auth/register', async (req, res) => {
+    console.log(`[AUTH] Register attempt for: ${req.body.username}`);
     try {
         const { username, password, displayName } = req.body;
         if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
 
+        // Password Security Enforcement
+        const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+        if (!passwordRegex.test(password)) {
+            return res.status(400).json({
+                error: 'Password too weak',
+                message: 'Password must be at least 8 characters long and include an uppercase letter, a lowercase letter, and a number.'
+            });
+        }
+
         const user = await User.register(username, password, displayName);
+        console.log(`[AUTH] User created in DB: ${user.username}. Starting req.login...`);
+
         req.login(user, (err) => {
-            if (err) return res.status(500).json({ error: 'Login failed after register' });
+            if (err) {
+                console.error("[AUTH] req.login error:", err);
+                return res.status(500).json({ error: 'Login failed after register' });
+            }
+            console.log(`[AUTH] Register/Login successful for ${user.username}`);
             res.json({ message: 'Registered', user });
         });
     } catch (err) {
-        console.error("Register Error", err);
+        console.error("[AUTH] Register Catch Error:", err);
+        if (err.code === 11000) {
+            return res.status(400).json({ error: 'Username or Email already exists' });
+        }
         res.status(500).json({ error: 'Registration failed', details: err.message });
     }
 });
 
-app.post('/auth/login', passport.authenticate('local'), (req, res) => {
-    res.json({ message: 'Logged in', user: req.user });
+app.post('/auth/login', (req, res, next) => {
+    passport.authenticate('local', (err, user, info) => {
+        if (err) return res.status(500).json({ error: 'Internal server error' });
+        if (!user) return res.status(401).json({ error: info?.message || 'Unauthorized' });
+
+        req.login(user, (loginErr) => {
+            if (loginErr) return res.status(500).json({ error: 'Login failed' });
+            return res.json({ message: 'Logged in', user });
+        });
+    })(req, res, next);
 });
 
 app.get('/auth/google', (req, res, next) => {

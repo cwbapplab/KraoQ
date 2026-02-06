@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Mail, Lock, User, Github, Chrome, Loader2, ArrowRight } from 'lucide-react';
 
-const API_URL = "http://localhost:3001";
+const API_URL = "http://127.0.0.1:3001";
 
 const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, setError }) => {
     const [mode, setMode] = useState('login'); // 'login' or 'register'
@@ -11,8 +11,18 @@ const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, set
     const [displayName, setDisplayName] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // Password Validation Logic
+    const passwordRequirements = [
+        { label: '8+ characters', test: (p) => p.length >= 8 },
+        { label: 'Upper & lowercase', test: (p) => /[a-z]/.test(p) && /[A-Z]/.test(p) },
+        { label: 'Contains a number', test: (p) => /\d/.test(p) },
+    ];
+    const isPasswordValid = mode === 'login' || passwordRequirements.every(req => req.test(password));
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!isPasswordValid) return;
+
         setIsSubmitting(true);
         setError(null);
 
@@ -22,6 +32,7 @@ const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, set
             } else {
                 await register(email, password, displayName);
             }
+            // If we reach here, it was successful
             onAuthSuccess();
         } catch (err) {
             // Error is handled by the hook and passed back
@@ -139,6 +150,7 @@ const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, set
                                             onChange={(e) => setDisplayName(e.target.value)}
                                             className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 pl-12 text-white placeholder:text-white/10 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all border-none"
                                             placeholder="Your name"
+                                            required
                                         />
                                     </div>
                                 </motion.div>
@@ -172,14 +184,27 @@ const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, set
                                         required
                                     />
                                 </div>
+                                {mode === 'register' && (
+                                    <div className="flex flex-wrap gap-x-4 gap-y-2 mt-2 ml-1">
+                                        {passwordRequirements.map((req, i) => {
+                                            const met = req.test(password);
+                                            return (
+                                                <div key={i} className={`flex items-center gap-1.5 transition-colors ${met ? 'text-green-400' : 'text-white/20'}`}>
+                                                    <div className={`w-1 h-1 rounded-full ${met ? 'bg-green-400' : 'bg-white/20'}`} />
+                                                    <span className="text-[9px] font-bold uppercase tracking-wider">{req.label}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
 
                             <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
+                                whileHover={isPasswordValid ? { scale: 1.02 } : {}}
+                                whileTap={isPasswordValid ? { scale: 0.98 } : {}}
                                 type="submit"
-                                disabled={isSubmitting}
-                                className="w-full bg-gradient-to-r from-primary to-accent text-white font-black py-4 rounded-2xl shadow-xl hover:shadow-primary/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-4"
+                                disabled={isSubmitting || !isPasswordValid}
+                                className="w-full bg-gradient-to-r from-primary to-accent text-white font-black py-4 rounded-2xl shadow-xl hover:shadow-primary/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-4"
                             >
                                 {isSubmitting ? (
                                     <Loader2 className="animate-spin" size={20} />
