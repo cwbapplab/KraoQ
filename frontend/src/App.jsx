@@ -760,9 +760,10 @@ function App() {
                                                                     setShowSearchDropdown(false);
                                                                 }}
                                                             >
-                                                                src={s.currentSong.thumbnail}
-                                                                className="w-12 h-12 rounded object-cover"
-                                                                onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
+                                                                <img
+                                                                    src={s.currentSong.thumbnail}
+                                                                    className="w-12 h-12 rounded object-cover"
+                                                                    onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
                                                                 />
                                                                 <div className="flex-1 truncate">
                                                                     <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.currentSong.title}</p>
