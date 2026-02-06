@@ -497,7 +497,7 @@ function App() {
     }
 
     return (
-        <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-8'}`}>
+        <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-4 sm:p-8'}`}>
             {/* Aurora Colors during Transition only */}
             {isTransitioning && !karaokeMode && (
                 <div className="fixed inset-0 z-0 opacity-40 transition-opacity duration-1000">
@@ -579,22 +579,22 @@ function App() {
 
             {/* AUTH HEADER */}
             {!karaokeMode && !isTransitioning && (
-                <div className="absolute top-4 right-4 z-50 animate-in fade-in duration-700">
+                <div className="fixed top-2 right-2 sm:top-4 sm:right-4 z-[60] animate-in fade-in duration-700">
                     {user ? (
-                        <div className="flex items-center gap-3 bg-black/30 backdrop-blur-md p-2 pl-4 rounded-full border border-white/10 hover:border-primary/50 transition-colors">
-                            <span className="text-sm font-medium text-white hidden sm:block">{user.displayName || "User"}</span>
+                        <div className="flex items-center gap-2 sm:gap-3 bg-black/40 backdrop-blur-xl p-1.5 sm:p-2 pl-3 sm:pl-4 rounded-full border border-white/10 hover:border-primary/50 transition-colors shadow-lg">
+                            <span className="text-xs sm:text-sm font-medium text-white">{user.displayName || "User"}</span>
                             {user.profilePicture ? (
-                                <img src={user.profilePicture} alt="Profile" className="w-8 h-8 rounded-full border border-white/20" />
+                                <img src={user.profilePicture} alt="Profile" className="w-6 h-6 sm:w-8 sm:h-8 rounded-full border border-white/20" />
                             ) : (
-                                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30">
-                                    <User size={16} className="text-primary" />
+                                <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30">
+                                    <User className="text-primary w-3.5 h-3.5 sm:w-4 sm:h-4" />
                                 </div>
                             )}
                             <button
                                 onClick={logout}
-                                className="p-2 hover:bg-white/10 rounded-full text-text-muted hover:text-red-400 transition-colors"
+                                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full text-text-muted hover:text-red-400 transition-colors"
                             >
-                                <LogOut size={16} />
+                                <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             </button>
                         </div>
                     ) : (
@@ -822,11 +822,11 @@ function App() {
 
             {/* RECENT SONGS */}
             {!karaokeMode && recentSongs.length > 0 && searchResults.length === 0 && (
-                <div className={`mt-16 w-full relative recent-list-container transition-[transform,opacity] duration-1000 ${isTransitioning ? 'animate-none' : 'opacity-100 scale-100 animate-in fade-in duration-700 delay-300'}`}>
-                    <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2 transition-opacity duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
+                <div className={`mt-16 w-screen max-w-[1100px] relative left-1/2 -translate-x-1/2 recent-list-container transition-[transform,opacity] duration-1000 ${isTransitioning ? 'animate-none' : 'opacity-100 scale-100 animate-in fade-in duration-700 delay-300'}`}>
+                    <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-4 transition-opacity duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
 
                     <div
-                        className={`flex overflow-x-auto gap-4 py-8 px-8 stylized-scrollbar scroll-smooth transition-all duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}
+                        className={`flex overflow-x-auto gap-4 py-8 px-4 stylized-scrollbar scroll-smooth transition-opacity duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}
                         style={{
                             maskImage: 'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)',
                             WebkitMaskImage: 'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)'
