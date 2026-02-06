@@ -1,13 +1,11 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: kraoq-mongo-pvc
+  name: kraoq-backend-pvc
   namespace: kraoq
-  labels:
-    app: kraoq-mongo
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
+      storage: 135Gi

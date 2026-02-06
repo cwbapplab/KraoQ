@@ -19,7 +19,7 @@ WORKDIR /app
 
 # Copy package.json and install Node deps
 COPY package.json ./
-RUN npm install --production
+RUN npm install
 
 # Copy requirements.txt and install Python deps
 COPY requirements.txt ./

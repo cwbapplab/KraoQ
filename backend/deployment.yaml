@@ -24,16 +24,51 @@ spec:
         env:
         - name: PORT
           value: "3001"
-        # Mount API Key secret
+        - name: AUDIO_PROCESSOR_URL
+          value: "http://10.0.0.X:3002" # REPLACE with your WireGuard Client IP
+        - name: MONGO_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: mongo-root-username
+        - name: MONGO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: mongo-root-password
+        - name: GOOGLE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: google-client-id
+        - name: GOOGLE_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: google-client-secret
+        - name: SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: kraoq-secrets
+              key: session-secret
         volumeMounts:
         - name: secrets-volume
           mountPath: /app/kraoq_secrets.json
           subPath: kraoq_secrets.json
           readOnly: true
+        - name: data-volume
+          mountPath: /app/uploads
+          subPath: uploads
+        - name: data-volume
+          mountPath: /app/cache.json
+          subPath: cache.json
       volumes:
       - name: secrets-volume
         secret:
           secretName: kraoq-secrets
+      - name: data-volume
+        persistentVolumeClaim:
+          claimName: kraoq-backend-pvc
 ---
 apiVersion: v1
 kind: Service

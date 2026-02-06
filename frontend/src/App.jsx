@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2 } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, User, LogOut } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
+import AuthModal from './components/AuthModal';
+import { useAuth } from './hooks/useAuth';
 
 const API_URL = "http://localhost:3001";
 
@@ -28,10 +31,17 @@ function App() {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [searchLimit, setSearchLimit] = useState(20);
     const [headerRect, setHeaderRect] = useState(null);
+    const { user, setUser, login, register, logout, error: authError, setError: setAuthError } = useAuth();
+    const [showLoginModal, setShowLoginModal] = useState(false);
     const headerRef = useRef(null);
-
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
+
+    // ... existing refs and effects ...
+
+    // ... existing code ...
+
+
 
     // Load Recent on Mount
     useEffect(() => {
@@ -76,7 +86,7 @@ function App() {
         const timer = setTimeout(async () => {
             if (query && query.length > 2) {
                 try {
-                    const res = await fetch(`${API_URL}/api/suggestions?q=${encodeURIComponent(query)}`);
+                    const res = await fetch(`${API_URL}/api/suggestions?q=${encodeURIComponent(query)}`, { credentials: 'include' });
                     const data = await res.json();
                     if (!data.error) setSuggestions(data);
                 } catch (e) {
@@ -99,7 +109,7 @@ function App() {
         }
 
         try {
-            const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(searchQuery)}&limit=${limit}&skip=${skip}`);
+            const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(searchQuery)}&limit=${limit}&skip=${skip}`, { credentials: 'include' });
             const data = await res.json();
             if (data.error) throw new Error(data.error);
 
@@ -265,8 +275,15 @@ function App() {
             const res = await fetch(`${API_URL}/api/process-yt`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ videoId })
+                body: JSON.stringify({ videoId }),
+                credentials: 'include'
             });
+
+            if (res.status === 401) {
+                // Redirect to Login
+                window.location.href = `${API_URL}/auth/google`;
+                return;
+            }
 
             const result = await res.json();
             if (!res.ok) throw new Error(result.error);
@@ -541,6 +558,38 @@ function App() {
                         <div className="ml-auto shrink-0 animate-in fade-in zoom-in duration-500">
                             <div className="w-10 h-10 rounded-full border-4 border-white/5 border-t-primary animate-spin shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
                         </div>
+                    )}
+                </div>
+            )}
+
+            {/* AUTH HEADER */}
+            {!karaokeMode && !isTransitioning && (
+                <div className="absolute top-4 right-4 z-50 animate-in fade-in duration-700">
+                    {user ? (
+                        <div className="flex items-center gap-3 bg-black/30 backdrop-blur-md p-2 pl-4 rounded-full border border-white/10 hover:border-primary/50 transition-colors">
+                            <span className="text-sm font-medium text-white hidden sm:block">{user.displayName || user.name?.givenName || "User"}</span>
+                            {user.photos && user.photos[0] ? (
+                                <img src={user.photos[0].value} alt="Profile" className="w-8 h-8 rounded-full border border-white/20" />
+                            ) : (
+                                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30">
+                                    <User size={16} className="text-primary" />
+                                </div>
+                            )}
+                            <button
+                                onClick={logout}
+                                className="p-2 hover:bg-white/10 rounded-full text-text-muted hover:text-red-400 transition-colors"
+                            >
+                                <LogOut size={16} />
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => setShowLoginModal(true)}
+                            className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-full font-bold text-sm hover:bg-slate-200 transition-colors shadow-lg hover:shadow-cyan-500/20"
+                        >
+                            <User size={16} />
+                            Sign In
+                        </button>
                     )}
                 </div>
             )}
@@ -919,6 +968,16 @@ function App() {
                     )}
                 </div>
             )}
+            {/* AUTH MODAL */}
+            <AuthModal
+                isOpen={showLoginModal}
+                onClose={() => setShowLoginModal(false)}
+                onAuthSuccess={() => setShowLoginModal(false)}
+                login={login}
+                register={register}
+                error={authError}
+                setError={setAuthError}
+            />
         </div>
     );
 }

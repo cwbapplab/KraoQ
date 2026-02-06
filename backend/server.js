@@ -1,17 +1,30 @@
 const express = require('express');
+require('dotenv').config();
 const { PythonShell } = require('python-shell');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
+const session = require('express-session');
+const FileStore = require('session-file-store')(session);
+const passport = require('./auth');
+
+const mongoose = require('mongoose');
+const User = require('./models/User');
+
+// Connect to MongoDB
+const mongoUser = process.env.MONGO_USERNAME || 'root';
+const mongoPass = process.env.MONGO_PASSWORD || 'example';
+const mongoHost = process.env.MONGO_HOST || 'kraoq-mongo-service';
+const mongoPort = process.env.MONGO_PORT || '27017';
+const mongoURI = `mongodb://${mongoUser}:${mongoPass}@${mongoHost}:${mongoPort}/kraoq?authSource=admin`;
+
+mongoose.connect(mongoURI)
+    .then(() => console.log('MongoDB Connected'))
+    .catch(err => console.error('MongoDB Connection Error:', err));
+
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.static('public')); // Serve frontend files
-app.use('/uploads', express.static('uploads')); // Serve uploaded/generated files
 
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, 'uploads');
@@ -19,90 +32,158 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
 }
 
-// Helper to format timestamps for SRT (HH:MM:SS,ms)
-function formatTimeSRT(seconds) {
-    const date = new Date(0);
-    date.setMilliseconds(seconds * 1000);
-    const isoString = date.toISOString().substr(11, 12);
-    return isoString.replace('.', ',');
-}
+// Middleware
+app.use(cors({
+    origin: true, // Allow all origins for now (or configured via env), required for credentials
+    credentials: true
+}));
+app.use(express.json());
+// app.use(express.static('public')); // Serve frontend files (Removed to expose only API)
+app.use('/uploads', express.static('uploads')); // Serve uploaded/generated files
 
-// Helper to format timestamps for LRC ([MM:SS.xx])
-function formatTimeLRC(seconds) {
-    const min = Math.floor(seconds / 60);
-    const sec = Math.floor(seconds % 60);
-    const ms = Math.floor((seconds % 1) * 100);
-    return `[${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(ms).padStart(2, '0')}]`;
-}
+// Session & Auth Middleware
+app.use(session({
+    store: new FileStore({ path: path.join(uploadDir, 'sessions'), ttl: 86400 }),
+    secret: process.env.SESSION_SECRET || 'keyboard cat',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production', // true if https
+        maxAge: 24 * 60 * 60 * 1000
+    }
+}));
+app.use(passport.initialize());
+app.use(passport.session());
 
-// Determine if we should split by words for Karaoke? 
-// Standard LRC is line based. We'll stick to segments for now, 
-// using segment start time.
-function generateLRC(segments) {
-    let lrc = "";
-    segments.forEach(seg => {
-        lrc += `${formatTimeLRC(seg.start)}${seg.text}\n`;
-    });
-    return lrc;
-}
-
-// Helper for python shell to avoid duplication
-const runPythonHelper = (script, args) => {
-    return new Promise((resolve, reject) => {
-        const options = {
-            mode: 'text',
-            pythonPath: 'py',
-            pythonOptions: ['-u'],
-            scriptPath: path.join(__dirname, 'scripts'),
-            args: args
-        };
-        PythonShell.run(script, options).then(messages => resolve(messages.join('\n'))).catch(reject);
-    });
+// Auth Guard Middleware
+const isAuthenticated = (req, res, next) => {
+    console.log(`[AUTH CHECK] Path: ${req.path}, Authenticated: ${req.isAuthenticated()}`);
+    if (req.isAuthenticated()) return next();
+    res.status(401).json({ error: 'Unauthorized' });
 };
 
-function safeParseJSON(str) {
+// ... helpers ...
+
+function runPythonHelper(scriptName, args) {
+    return new Promise((resolve, reject) => {
+        const scriptsDir = path.join(__dirname, 'scripts');
+        const options = {
+            mode: 'text',
+            pythonPath: 'python3', // Default to python3 in most containers
+            pythonOptions: ['-u'],
+            scriptPath: scriptsDir,
+            args: args
+        };
+
+        const shell = new PythonShell(scriptName, options);
+        let results = [];
+
+        shell.on('message', function (message) {
+            // console.log(`[Python ${scriptName}]`, message); 
+            results.push(message);
+        });
+
+        shell.end(function (err) {
+            if (err) {
+                err.logs = results;
+                return reject(err);
+            }
+            // Return the last line as it likely contains the JSON result
+            resolve(results.length > 0 ? results[results.length - 1] : null);
+        });
+    });
+}
+
+function safeParseJSON(input) {
+    if (!input) return {};
     try {
-        return JSON.parse(str);
+        // If input is an array (from multiple python print(json)), take the last one?
+        // But runPythonHelper returns the last line string.
+        if (typeof input === 'object') return input;
+        return JSON.parse(input);
     } catch (e) {
-        // Try to find a JSON object in the string
-        const match = str.match(/\{[\s\S]*\}/);
-        if (match) {
-            try { return JSON.parse(match[0]); } catch (e2) { }
-        }
-        throw new Error(`Failed to parse Python output: ${str.substring(0, 100)}...`);
+        console.error("JSON Parse Error:", e.message, "Input:", input);
+        return { error: 'Invalid JSON from script' };
     }
 }
 
-// Helper to parse standard LRC into segments
 function parseLRC(lrcContent) {
-    // ... (rest is same, just skipped for brevity for the tool, but I need to include context to match)
     const lines = lrcContent.split('\n');
     const segments = [];
-    const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
 
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        const match = timeRegex.exec(line);
+    for (const line of lines) {
+        // [mm:ss.xx] text
+        const regex = /^\[(\d{2}):(\d{2}(?:\.\d+)?)\](.*)/;
+        const match = line.match(regex);
+
         if (match) {
-            const min = parseInt(match[1]);
-            const sec = parseInt(match[2]);
-            const ms = parseInt(match[3].padEnd(3, '0').substring(0, 3)); // Normalize ms
-            const time = min * 60 + sec + ms / 1000;
-            const text = line.replace(timeRegex, '').trim();
+            const minutes = parseInt(match[1], 10);
+            const seconds = parseFloat(match[2]);
+            const text = match[3].trim();
+            const timestamp = minutes * 60 + seconds;
 
-            if (text) {
-                // Set end time of previous segment to start time of this one
-                if (segments.length > 0) {
-                    segments[segments.length - 1].end = time;
-                }
-                segments.push({ start: time, end: time + 5, text: text }); // Default +5s end if last
-            }
+            segments.push({
+                time: timestamp,
+                text: text
+            });
         }
     }
     return segments;
 }
 
-app.get('/api/search', async (req, res) => {
+// AUTH ROUTES
+app.post('/auth/register', async (req, res) => {
+    try {
+        const { username, password, displayName } = req.body;
+        if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+
+        const user = await User.register(username, password, displayName);
+        req.login(user, (err) => {
+            if (err) return res.status(500).json({ error: 'Login failed after register' });
+            res.json({ message: 'Registered', user });
+        });
+    } catch (err) {
+        console.error("Register Error", err);
+        res.status(500).json({ error: 'Registration failed', details: err.message });
+    }
+});
+
+app.post('/auth/login', passport.authenticate('local'), (req, res) => {
+    res.json({ message: 'Logged in', user: req.user });
+});
+
+app.get('/auth/google', (req, res, next) => {
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+        return res.status(501).json({ error: "Google OAuth is not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to your .env file." });
+    }
+    passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
+});
+
+app.get('/auth/google/callback',
+    passport.authenticate('google', { failureRedirect: '/' }),
+    function (req, res) {
+        // Successful authentication, redirect home.
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:1420';
+        res.redirect(frontendUrl);
+    }
+);
+
+app.get('/auth/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) { return res.status(500).json({ error: 'Logout failed' }); }
+        res.json({ message: 'Logged out' });
+    });
+});
+
+app.get('/auth/status', (req, res) => {
+    if (req.isAuthenticated()) {
+        res.json({ isAuthenticated: true, user: req.user });
+    } else {
+        res.json({ isAuthenticated: false });
+    }
+});
+
+app.get('/api/search', isAuthenticated, async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: 'Query required' });
 
@@ -130,7 +211,7 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-app.get('/api/suggestions', async (req, res) => {
+app.get('/api/suggestions', isAuthenticated, async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: 'Query required' });
 
@@ -227,7 +308,7 @@ async function callAudioProcessorService(audioPath, outputDir) {
     return json.data;
 }
 
-app.post('/api/process-yt', async (req, res) => {
+app.post('/api/process-yt', isAuthenticated, async (req, res) => {
     const { videoId } = req.body;
     if (!videoId) return res.status(400).json({ error: 'Video ID required' });
 

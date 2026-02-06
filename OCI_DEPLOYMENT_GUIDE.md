@@ -31,6 +31,7 @@ You need the following OCI identifiers:
     region           = "us-ashburn-1"
     compartment_ocid = "ocid1.tenancy.oc1..."
     ssh_public_key   = "ssh-rsa AAAAB3..."
+    vpn_password     = "MakeSureThisIsStrong123!"
     ```
     > [!WARNING]
     > Never commit `terraform.tfvars` or your `.pem` key to Git!
@@ -78,17 +79,69 @@ The Cloud-init script installed K3s and ArgoCD.
     kubectl get pods -n argocd
     ```
 3.  **Deploy Application**:
-    Copy your `backend/deployment.yaml` and `database/deployment.yaml` to the server or apply them directly from the repo using ArgoCD (requires ArgoCD UI setup).
+    Copy your `backend/deployment.yaml`, `backend/pvc.yaml`, `backend/ingress.yaml`, and `database/deployment.yaml` to the server or apply them directly from the repo.
 
-    *For simple start, apply directly via kubectl:*
+    *Using GitOps (ArgoCD):*
+    1.  Edit `infrastructure/argocd/apps.yaml` and replace `YOUR_USERNAME` with your GitHub username.
+    2.  **Important**: Edit `backend/deployment.yaml` and set `AUDIO_PROCESSOR_URL` to your Home Server's VPN IP (e.g., `http://10.X.X.X:3002`). You can see this IP in the WireGuard UI.
+    3.  Commit and push these changes.
+    4.  Apply the manifests:
     ```bash
-    # Create secret
+    # 1. Prepare Secrets File (Audio Processor API Key)
+    # The Backend expects this JSON structure
+    echo '{"AUDIO_PROCESSOR_API_KEY": "your_secure_api_key_here"}' > kraoq_secrets.json
+
+    # 2. Create Kubernetes Secret
     kubectl create secret generic kraoq-secrets \
       --from-literal=mongo-root-username=admin \
-      --from-literal=mongo-root-password=password123
-    
-    # Apply manifests (you can clone your repo on the server)
-    git clone https://github.com/your-user/KraoQ.git
-    kubectl apply -f KraoQ/backend/deployment.yaml
-    kubectl apply -f KraoQ/database/deployment.yaml
+      --from-literal=mongo-root-password=YourSecureMongoPassword123 \
+      --from-literal=google-client-id=YOUR_GOOGLE_CLIENT_ID \
+      --from-literal=google-client-secret=YOUR_GOOGLE_CLIENT_SECRET \
+      --from-literal=session-secret=MakeThisALongRandomString \
+      --from-file=kraoq_secrets.json=kraoq_secrets.json
+      
+    # 3. Create Storage for Uploads and Ingress
+    kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/backend/pvc.yaml
+    kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/backend/ingress.yaml
+      
+    # 4. Connect ArgoCD to your repo
+    kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/infrastructure/argocd/apps.yaml
     ```
+    4.  ArgoCD will automatically detect the apps and sync them to your cluster.
+
+## Credentials Reference
+
+The following sensitive credentials must be managed manually (either via the K8s Secret command above or **Oracle Cloud Vault** if you implement external-secrets):
+
+| Credential | Key in Secret | Purpose |
+| :--- | :--- | :--- |
+| **MongoDB Root User** | `mongo-root-username` | Database Admin User |
+| **MongoDB Root Pass** | `mongo-root-password` | Database Admin Password |
+| **Audio Processor Key** | `kraoq_secrets.json` | API Key to authenticate with your home Audio Processor |
+| **Google Client ID** | `google-client-id` | OAuth 2.0 Client ID for Login |
+| **Google Client Secret** | `google-client-secret` | OAuth 2.0 Client Secret for Login |
+| **Session Secret** | `session-secret` | Key to sign session cookies |
+
+## Initial Setup: Google OAuth
+
+To enable "Sign in with Google":
+1.  Go to [Google Cloud Console](https://console.cloud.google.com/).
+2.  Create a Project -> **APIs & Services** -> **Credentials**.
+3.  Create Credentials -> **OAuth Client ID** -> **Web Application**.
+4.  **Authorized Redirect URIs**: `https://<YOUR_PUBLIC_IP>/auth/google/callback` (Note: You must use HTTPS, accept the browser warning for self-signed certs during dev).
+5.  Copy the **Client ID** and **Client Secret** for the command above.
+
+## Step 6: Connect via VPN (WireGuard)
+
+To securely access your cluster (and for your local Audio Processor to talk to it, or vice versa if using a site-to-site setup):
+
+1.  **Secure Web UI Access**: The admin UI (port 51821) is **not** exposed to the internet for security. Access it via SSH Tunnel:
+    ```bash
+    ssh -L 51821:localhost:51821 opc@<public_ip>
+    ```
+    Then open `http://localhost:51821` in your browser.
+2.  **Login**: Use the password configured in `cloud-init.yaml` (Default: `kraoq_vpn_secret`).
+3.  **Create Client**: Click "New Client", give it a name (e.g., "HomeServer").
+4.  **Connect**: Download the `.conf` file or scan the QR code.
+    *   **On your local machine**: Import the `.conf` into the WireGuard client and activate requirements.
+5.  **Verify**: You should now be able to ping the internal cluster network (10.0.0.x).

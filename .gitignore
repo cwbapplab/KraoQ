@@ -1,3 +1,53 @@
-backend/cache.json
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Environment & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+kraoq_secrets.json
+*.pem
+*.key
+
+# Build Outputs
+dist/
+build/
+coverage/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
 backend/debug_separate_v2.log
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.terraform.lock.hcl
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application Data
+backend/cache.json
+backend/uploads/*
+!backend/uploads/.gitkeep
+audio-processor/debug_separate_service.log
