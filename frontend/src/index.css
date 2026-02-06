@@ -50,7 +50,7 @@
 }
 
 body {
-    @apply bg-bg text-text font-sans min-h-screen flex justify-center items-center overflow-x-hidden m-0 p-0;
+    @apply bg-bg text-text font-sans min-h-screen flex justify-center items-start overflow-x-hidden m-0 p-0 pt-10;
 }
 
 /* Subtle background glow */

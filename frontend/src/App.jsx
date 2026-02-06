@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X } from 'lucide-react';
 import AuroraBackground from './components/AuroraBackground';
 
 const API_URL = "http://localhost:3001";
@@ -48,7 +48,8 @@ function App() {
             const currentTime = audio.currentTime;
             let newIndex = -1;
             for (let i = 0; i < lyricsData.length; i++) {
-                if (currentTime >= lyricsData[i].time) newIndex = i;
+                // Add 300ms offset to trigger transition slightly earlier for the singer
+                if (currentTime + 0.3 >= lyricsData[i].time) newIndex = i;
                 else break;
             }
             if (newIndex !== activeLineIndex) {
@@ -87,7 +88,30 @@ function App() {
             const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`);
             const data = await res.json();
             if (data.error) throw new Error(data.error);
-            setSearchResults(data);
+
+            // Find local matches in cache
+            const localMatches = Object.values(songCache)
+                .filter(s =>
+                    s.currentSong.title.toLowerCase().includes(query.toLowerCase()) ||
+                    s.currentSong.artist.toLowerCase().includes(query.toLowerCase())
+                )
+                .map(s => ({
+                    videoId: s.currentSong.videoId,
+                    title: s.currentSong.title,
+                    artists: s.currentSong.artist,
+                    thumbnail: s.currentSong.thumbnail,
+                    hasLyrics: true,
+                    isCached: true // Extra flag for highlighting
+                }));
+
+            // Merge and remove duplicates (prefer local)
+            const videoIds = new Set(localMatches.map(m => m.videoId));
+            const merged = [
+                ...localMatches,
+                ...data.filter(item => !videoIds.has(item.videoId))
+            ];
+
+            setSearchResults(merged);
         } catch (e) {
             setStatus("Error: " + e.message);
         } finally {
@@ -201,6 +225,12 @@ function App() {
         localStorage.setItem('recent_songs', JSON.stringify(newRecent));
     };
 
+    const removeFromRecent = (videoId) => {
+        const newRecent = recentSongs.filter(s => s.videoId !== videoId);
+        setRecentSongs(newRecent);
+        localStorage.setItem('recent_songs', JSON.stringify(newRecent));
+    };
+
     const toggleFullscreen = () => {
         if (!document.fullscreenElement) {
             karaokeContainerRef.current.requestFullscreen().catch(err => {
@@ -289,12 +319,12 @@ function App() {
                     KraoQ
                 </h1>
                 <p className="text-xl text-text-muted font-light tracking-wide">
-                    Transform any YouTube song into a <span className="text-white font-medium">Professional Karaoke Experience</span>
+                    Your favorite songs with a <span className="text-white font-medium">Professional Karaoke Experience</span>
                 </p>
             </div>
 
             {/* SEARCH SECTION */}
-            <div className={`transition-all duration-500 delay-100 ${karaokeMode ? 'opacity-0 translate-y-10 pointer-events-none absolute' : 'opacity-100 translate-y-0'}`}>
+            <div className={`transition-all duration-500 delay-100 ${karaokeMode ? 'opacity-0 translate-y-10 pointer-events-none absolute' : 'opacity-100 translate-y-0'} ${showSearchDropdown ? 'z-[60]' : 'z-20'} relative`}>
                 <div className="bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all">
                     {/* Search Input */}
                     <div className="relative z-10">
@@ -416,18 +446,25 @@ function App() {
                             <div
                                 key={video.videoId}
                                 onClick={() => processSong(video.videoId, video.thumbnail)}
-                                className="bg-card-bg border border-white/5 p-4 rounded-2xl flex items-center gap-4 cursor-pointer hover:bg-white/5 hover:scale-[1.02] hover:border-primary/30 transition-all group"
+                                className={`bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer hover:bg-white/5 hover:scale-[1.02] hover:border-primary/30 transition-all group ${video.isCached ? 'border-primary/40 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : 'border-white/5'}`}
                             >
                                 <img src={video.thumbnail} alt={video.title} className="w-24 h-24 object-cover rounded-xl shadow-lg group-hover:shadow-primary/20 transition-all" />
                                 <div className="flex-1 min-w-0">
                                     <h3 className="font-bold text-lg truncate text-white group-hover:text-primary transition-colors">{video.title}</h3>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                         <p className="text-sm text-text-muted truncate">{video.artists || video.channel}</p>
-                                        {video.hasLyrics && (
-                                            <span className="bg-green-500/20 text-green-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-500/30">
-                                                Lyrics
-                                            </span>
-                                        )}
+                                        <div className="flex gap-1">
+                                            {video.isCached && (
+                                                <span className="bg-primary/20 text-primary-hover text-[10px] font-bold px-2 py-0.5 rounded-full border border-primary/30 uppercase tracking-tighter">
+                                                    In Library
+                                                </span>
+                                            )}
+                                            {video.hasLyrics && (
+                                                <span className="bg-green-500/20 text-green-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-500/30 uppercase tracking-tighter">
+                                                    Lyrics
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="bg-white/10 p-3 rounded-full group-hover:bg-primary group-hover:text-white transition-all">
@@ -460,6 +497,15 @@ function App() {
                                     <span className="text-sm font-medium text-white/80 group-hover:text-white max-w-[150px] truncate">{song.title}</span>
                                     {song.hasLyrics && <span className="text-[9px] text-green-400 font-bold uppercase tracking-tighter">Lyrics</span>}
                                 </div>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeFromRecent(song.videoId);
+                                    }}
+                                    className="ml-2 p-1.5 rounded-full hover:bg-white/20 text-text-muted hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+                                >
+                                    <X size={12} />
+                                </button>
                             </div>
                         ))}
                     </div>
@@ -469,7 +515,7 @@ function App() {
                 <div
                     ref={karaokeContainerRef}
                     className={`
-                mt-4 bg-card-bg/90 rounded-3xl border border-white/10 shadow-2xl overflow-hidden relative
+                 bg-card-bg/90 rounded-3xl border border-white/10 shadow-2xl overflow-hidden relative
                 ${isFullscreen ? 'fixed inset-0 w-screen h-screen z-50 rounded-none m-0 p-8 flex flex-col justify-center bg-black' : 'p-12'}
             `}
                     onClick={() => setShowControls(prev => !prev)} // Toggle controls in all modes
@@ -500,12 +546,18 @@ function App() {
                             </div>
                         </div>
 
-                        <div className={`text-center w-full z-10 relative overflow-hidden h-full transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
+                        <div
+                            className={`text-center w-full z-10 relative overflow-hidden transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}
+                            style={{
+                                height: isFullscreen ? '900px' : '500px',
+                                maskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)',
+                                WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)'
+                            }}
+                        >
                             <div
                                 className="absolute left-0 w-full transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]"
                                 style={{
                                     // Calculate center offset and shift by active index
-                                    // 25% height is roughly the center of the viewport for the active line
                                     transform: `translateY(${- (activeLineIndex + 1) * (isFullscreen ? 180 : 100)}px)`,
                                     top: '50%',
                                     marginTop: isFullscreen ? '-90px' : '-50px'
