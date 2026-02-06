@@ -205,6 +205,7 @@ function App() {
                     setHeaderRect(null);
                     setSelectedSource(null);
                     setIsProcessing(false);
+                    setStatus("");
                 }, 600); // Wait for fadeout animation
             }, remaining);
         };
@@ -460,9 +461,9 @@ function App() {
                         transform: 'none'
                     }}
                     className={`
-                        fixed z-[1000] transition-all duration-1000 ease-out flex items-center 
+                        fixed z-[1000] transition-all duration-1000 ease-out flex items-center flex-nowrap
                         ${transitionStage === 'hero' || transitionStage === 'fadeout'
-                            ? 'p-6 gap-6 rounded-full w-fit max-w-[450px] min-w-[300px] bg-slate-900/90 backdrop-blur-md border border-primary/50 shadow-[0_0_80px_rgba(99,102,241,0.4)] ring-2 ring-primary/30'
+                            ? 'p-6 gap-6 rounded-full w-auto max-w-[600px] min-w-[350px] pr-12 bg-slate-900/90 backdrop-blur-md border border-primary/50 shadow-[0_0_80px_rgba(99,102,241,0.4)] ring-2 ring-primary/30'
                             : `gap-4 bg-card-bg border border-white/10 shadow-xl overflow-hidden ${selectedSource === 'recent' ? 'p-3 rounded-full' : (selectedSource === 'dropdown' ? 'p-3 rounded-xl' : 'p-4 rounded-2xl')}`}
                         ${transitionStage === 'fadeout' ? 'opacity-0 blur-3xl scale-110' : 'opacity-100'}
                     `}
@@ -479,10 +480,10 @@ function App() {
                     />
                     <div className="flex-1 min-w-0">
                         <h2 className={`
-                            font-black text-white leading-tight transition-all duration-1000
+                            font-black text-white transition-all duration-1000
                             ${transitionStage === 'hero' || transitionStage === 'fadeout'
-                                ? 'text-2xl'
-                                : (selectedSource === 'recent' || selectedSource === 'dropdown' ? 'text-sm font-medium' : 'text-lg font-bold')}
+                                ? 'text-2xl whitespace-nowrap truncate'
+                                : (selectedSource === 'recent' || selectedSource === 'dropdown' ? 'text-sm font-medium truncat' : 'text-lg font-bold truncate')}
                         `}>
                             {currentSong.title}
                         </h2>
