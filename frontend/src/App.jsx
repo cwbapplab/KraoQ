@@ -19,6 +19,12 @@ function App() {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [activeLineIndex, setActiveLineIndex] = useState(-1);
     const [nextLinesPreview, setNextLinesPreview] = useState("");
+    const [isTransitioning, setIsTransitioning] = useState(false);
+    const [selectedRect, setSelectedRect] = useState(null);
+    const [transitionStage, setTransitionStage] = useState('idle'); // idle, start, hero
+    const [selectedSource, setSelectedSource] = useState(null); // 'search' or 'recent'
+    const [headerRect, setHeaderRect] = useState(null);
+    const headerRef = useRef(null);
 
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
@@ -59,7 +65,7 @@ function App() {
 
         audio.addEventListener('timeupdate', handleTimeUpdate);
         return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
-    }, [lyricsData, activeLineIndex]);
+    }, [lyricsData, activeLineIndex, karaokeMode, currentSong]);
 
     const searchMusic = async () => {
         if (!query) return;
@@ -119,7 +125,7 @@ function App() {
         }
     };
 
-    const processSong = async (videoIdInput, thumbnail = null) => {
+    const processSong = async (videoIdInput, thumbnail = null, e = null) => {
         // Handle variations (old history or direct pass)
         const videoId = (typeof videoIdInput === 'string' ? videoIdInput : (videoIdInput?.videoId || videoIdInput?.id));
 
@@ -128,13 +134,63 @@ function App() {
             return;
         }
 
+        // Immediately set info for transition tracking
+        let title = "Loading...";
+        const foundInSearch = searchResults.find(v => v.videoId === videoId);
+        const foundInRecent = recentSongs.find(s => s.videoId === videoId);
+        if (foundInSearch) title = foundInSearch.title;
+        else if (foundInRecent) title = foundInRecent.title;
+
+        setCurrentSong({ videoId, thumbnail, title });
+        setActiveLineIndex(-1); // Reset for new song
+
+        if (e) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setSelectedRect(rect);
+            // Detect source based on class or context
+            const isRecent = e.currentTarget.closest('.recent-list-container') || recentSongs.some(s => s.videoId === videoId && !searchResults.some(sv => sv.videoId === videoId));
+            const isDropdown = e.currentTarget.closest('.search-dropdown-item');
+            setSelectedSource(isDropdown ? 'dropdown' : (isRecent ? 'recent' : 'search'));
+        }
+
+        if (headerRef.current) {
+            setHeaderRect(headerRef.current.getBoundingClientRect());
+        }
+
+        // Batch state updates to ensure they happen in the same cycle
+        setIsTransitioning(true);
+        setTransitionStage('start');
+
+        const transitionStartTime = Date.now();
+        const minDisplayTime = 2000; // 1s flight + 1s clear hold
+
+        // Helper to finalize the transition effect and enter karaoke mode
+        const finalizeTransition = () => {
+            const elapsed = Date.now() - transitionStartTime;
+            const remaining = Math.max(0, minDisplayTime - elapsed);
+
+            setTimeout(() => {
+                setTransitionStage('fadeout');
+                setTimeout(() => {
+                    setKaraokeMode(true);
+                    setIsTransitioning(false);
+                    setTransitionStage('idle');
+                    setSelectedRect(null);
+                    setHeaderRect(null);
+                    setSelectedSource(null);
+                }, 600); // Wait for fadeout animation
+            }, remaining);
+        };
+
+        // Stage 1: Move to Hero (micro-delay to ensure DOM has rendered 'start' position correctly)
+        setTimeout(() => setTransitionStage('hero'), 30);
+
         // CHECK FRONTEND CACHE
         if (songCache[videoId]) {
             const cached = songCache[videoId];
             console.log("[FRONTEND CACHE HIT]", videoId);
             setLyricsData(cached.lyricsData);
             setCurrentSong(cached.currentSong);
-            setKaraokeMode(true);
             setStatus("Loaded from cache.");
 
             // Move to top of recent
@@ -145,6 +201,7 @@ function App() {
                 thumbnail: cached.currentSong.thumbnail,
                 hasLyrics: true
             });
+            finalizeTransition();
             return;
         }
 
@@ -183,8 +240,7 @@ function App() {
                 hasLyrics: true // Since it successfully processed
             });
 
-            setKaraokeMode(true);
-            setStatus("Done! Enjoy.");
+            // Transition is already started in processSong for new fetches
 
             // UPDATE FRONTEND CACHE (Limit 100)
             setSongCache(prev => {
@@ -214,8 +270,13 @@ function App() {
                 return newCache;
             });
 
+            finalizeTransition();
+
         } catch (e) {
-            setStatus("Error: " + e.message);
+            console.error(e);
+            setStatus("Wait, something went wrong...");
+            setIsTransitioning(false);
+            setTransitionStage('idle');
         }
     };
 
@@ -323,13 +384,88 @@ function App() {
 
     return (
         <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-8'}`}>
+            {/* Global Transition Overlay Backdrop */}
+            {isTransitioning && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-3xl z-[150] animate-in fade-in duration-1000" />
+            )}
+
+            {/* HERO TRANSITION ELEMENT */}
+            {isTransitioning && currentSong && (
+                <div
+                    style={transitionStage === 'hero' || transitionStage === 'fadeout' ? {
+                        top: '50%',
+                        left: '50%',
+                        transform: `translate(-50%, -50%) scale(${transitionStage === 'fadeout' ? 0.7 : 0.6})`
+                    } : {
+                        top: selectedRect?.top,
+                        left: selectedRect?.left,
+                        width: selectedRect?.width,
+                        height: selectedRect?.height,
+                        transform: 'none'
+                    }}
+                    className={`
+                        fixed z-[1000] transition-all duration-1000 ease-out flex items-center 
+                        ${transitionStage === 'hero' || transitionStage === 'fadeout'
+                            ? 'p-6 gap-6 rounded-full w-fit max-w-[450px] min-w-[300px] bg-slate-900/90 backdrop-blur-md border border-primary/50 shadow-[0_0_80px_rgba(99,102,241,0.4)] ring-2 ring-primary/30'
+                            : `gap-4 bg-card-bg border border-white/10 shadow-xl overflow-hidden ${selectedSource === 'recent' ? 'p-3 rounded-full' : (selectedSource === 'dropdown' ? 'p-3 rounded-xl' : 'p-4 rounded-2xl')}`}
+                        ${transitionStage === 'fadeout' ? 'opacity-0 blur-3xl scale-110' : 'opacity-100'}
+                    `}
+                >
+                    <img
+                        src={currentSong.thumbnail}
+                        className={`
+                            shrink-0 transition-all duration-1000
+                            ${transitionStage === 'hero' || transitionStage === 'fadeout'
+                                ? 'w-20 h-20 rounded-full shadow-lg'
+                                : (selectedSource === 'recent' ? 'w-10 h-10 rounded-full' : (selectedSource === 'dropdown' ? 'w-8 h-8 rounded' : 'w-24 h-24 rounded-xl'))}
+                            object-cover
+                        `}
+                    />
+                    <div className="flex-1 min-w-0">
+                        <h2 className={`
+                            font-black text-white leading-tight transition-all duration-1000
+                            ${transitionStage === 'hero' || transitionStage === 'fadeout'
+                                ? 'text-2xl'
+                                : (selectedSource === 'recent' || selectedSource === 'dropdown' ? 'text-sm font-medium' : 'text-lg font-bold')}
+                        `}>
+                            {currentSong.title}
+                        </h2>
+                        {/* Preparing Status */}
+                        {(transitionStage === 'hero' || transitionStage === 'fadeout') && (
+                            <p className={`text-primary-hover font-bold animate-pulse mt-1 flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
+                                <Mic2 size={18} /> Preparing Your Stage...
+                            </p>
+                        )}
+                    </div>
+                </div>
+            )}
+
             {/* HEADER */}
             {!karaokeMode && (
-                <div className="text-center mb-12 animate-in fade-in duration-500">
+                <div
+                    ref={headerRef}
+                    style={transitionStage === 'hero' || transitionStage === 'fadeout' ? {
+                        top: '50%',
+                        left: '50%',
+                        transform: `translate(-50%, -185%) scale(${transitionStage === 'fadeout' ? 2.0 : 1.8})`
+                    } : transitionStage === 'start' ? {
+                        top: headerRect?.top,
+                        left: headerRect?.left,
+                        width: headerRect?.width,
+                        transform: 'none'
+                    } : {}}
+                    className={`
+                        text-center mb-12 transition-all duration-1000 ease-out
+                        ${isTransitioning
+                            ? 'fixed z-[800] blur-none pointer-events-none'
+                            : 'animate-in fade-in'}
+                        ${transitionStage === 'fadeout' ? 'opacity-0 blur-3xl' : 'opacity-100'}
+                    `}
+                >
                     <h1 className="text-6xl font-bold mb-4 tracking-tight drop-shadow-lg bg-clip-text text-transparent bg-gradient-to-r from-primary via-accent to-primary animate-pulse">
                         KraoQ
                     </h1>
-                    <p className="text-xl text-text-muted font-light tracking-wide">
+                    <p className={`text-xl text-text-muted font-light tracking-wide transition-opacity duration-300 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}>
                         Your favorite songs with a <span className="text-white font-medium">Professional Karaoke Experience</span>
                     </p>
                 </div>
@@ -337,10 +473,10 @@ function App() {
 
             {/* SEARCH SECTION */}
             {!karaokeMode && (
-                <div className={`transition-all duration-300 ${showSearchDropdown ? 'z-[60]' : 'z-20'} relative animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150`}>
-                    <div className="bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all">
+                <div className={`transition-all duration-1000 ${showSearchDropdown ? 'z-[60]' : 'z-20'} relative animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150`}>
+                    <div className={`bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all ${isTransitioning ? 'pointer-events-none' : ''}`}>
                         {/* Search Input */}
-                        <div className="relative z-10">
+                        <div className={`relative z-10 transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0 scale-95' : ''}`}>
                             <div className="relative flex items-center">
                                 <Search className="absolute left-6 text-text-muted w-6 h-6 group-focus-within:text-primary transition-colors" />
                                 <input
@@ -369,9 +505,9 @@ function App() {
                                                         .map(s => (
                                                             <div
                                                                 key={s.currentSong.videoId}
-                                                                className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group"
-                                                                onClick={() => {
-                                                                    processSong(s.currentSong.videoId, s.currentSong.thumbnail);
+                                                                className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group search-dropdown-item w-fit max-w-full"
+                                                                onClick={(e) => {
+                                                                    processSong(s.currentSong.videoId, s.currentSong.thumbnail, e);
                                                                     setShowSearchDropdown(false);
                                                                 }}
                                                             >
@@ -442,7 +578,7 @@ function App() {
 
                         {/* Status Message */}
                         {status && (
-                            <div className="mt-6 text-center animate-pulse">
+                            <div className={`mt-6 text-center transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0 scale-95' : 'animate-pulse'}`}>
                                 <p className="text-accent font-medium bg-accent/10 inline-block px-4 py-1 rounded-full text-sm border border-accent/20">
                                     {status}
                                 </p>
@@ -452,12 +588,16 @@ function App() {
 
                     {/* SEARCH RESULTS */}
                     {searchResults.length > 0 && (
-                        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
                             {searchResults.map((video) => (
                                 <div
                                     key={video.videoId}
-                                    onClick={() => processSong(video.videoId, video.thumbnail)}
-                                    className={`bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer hover:bg-white/5 hover:scale-[1.02] hover:border-primary/30 transition-all group ${video.isCached ? 'border-primary/40 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : 'border-white/5'}`}
+                                    onClick={(e) => processSong(video.videoId, video.thumbnail, e)}
+                                    className={`
+                                        bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer transition-all duration-1000 w-fit max-w-full
+                                        ${isTransitioning ? 'blur-2xl opacity-5 scale-90 grayscale pointer-events-none' : 'hover:bg-white/5 hover:scale-[1.02] border-white/5 group'}
+                                        ${video.isCached && !isTransitioning ? 'border-primary/40 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : ''}
+                                    `}
                                 >
                                     <img src={video.thumbnail} alt={video.title} className="w-24 h-24 object-cover rounded-xl shadow-lg group-hover:shadow-primary/20 transition-all" />
                                     <div className="flex-1 min-w-0">
@@ -490,19 +630,22 @@ function App() {
 
             {/* RECENT SONGS */}
             {!karaokeMode && recentSongs.length > 0 && searchResults.length === 0 && (
-                <div className="mt-16 w-full overflow-hidden relative animate-in fade-in duration-700 delay-300">
-                    <h3 className="text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2">Recently Sung</h3>
+                <div className={`mt-16 w-full relative recent-list-container transition-all duration-1000 ${isTransitioning ? 'animate-none' : 'opacity-100 scale-100 animate-in fade-in duration-700 delay-300'}`}>
+                    <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2 transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
 
                     {/* Shadow Gradients for Fade effect */}
                     <div className="absolute left-0 top-12 bottom-0 w-20 bg-gradient-to-r from-bg to-transparent z-10 pointer-events-none" />
                     <div className="absolute right-0 top-12 bottom-0 w-20 bg-gradient-to-l from-bg to-transparent z-10 pointer-events-none" />
 
-                    <div className="flex overflow-x-auto gap-4 py-4 px-2 stylized-scrollbar scroll-smooth">
+                    <div className={`flex overflow-x-auto gap-4 py-8 px-2 stylized-scrollbar scroll-smooth transition-all duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}>
                         {recentSongs.map((song, i) => (
                             <div
                                 key={`${song.videoId}-${i}`}
-                                onClick={() => processSong(song.videoId, song.thumbnail)}
-                                className="inline-flex bg-card-bg/50 border border-white/5 hover:border-white/20 p-3 pr-6 rounded-full items-center gap-3 cursor-pointer hover:bg-white/10 transition-all active:scale-95 group shrink-0"
+                                onClick={(e) => processSong(song.videoId, song.thumbnail, e)}
+                                className={`
+                                    inline-flex p-3 pr-6 rounded-full items-center gap-3 cursor-pointer transition-all duration-700 shrink-0
+                                    ${isTransitioning ? 'blur-2xl opacity-0 grayscale scale-50 pointer-events-none' : 'bg-card-bg/50 border border-white/5 hover:border-white/20 hover:bg-white/10 active:scale-95 group'}
+                                `}
                             >
                                 <img src={song.thumbnail} alt={song.title} className="w-10 h-10 rounded-full object-cover border border-white/10" />
                                 <div className="flex flex-col">
