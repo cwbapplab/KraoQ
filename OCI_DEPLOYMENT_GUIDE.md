@@ -65,7 +65,26 @@ To enable the auto-deployment pipeline:
     *   It builds the Docker image and pushes to `ghcr.io/your-user/kraoq-backend`.
     *   It updates `backend/deployment.yaml` with the new tag.
 
-## Step 5: GitOps Sync (ArgoCD)
+## Step 5: Configure Cloudflare Tunnel
+
+To securely expose your API without opening public ports on your Oracle instance:
+
+1.  **Create a Tunnel**:
+    *   Go to [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/).
+    *   Navigate to **Networks** -> **Tunnels** -> **Create a Tunnel**.
+    *   Name it (e.g., `KraoQ-Remote`) and save.
+2.  **Get Tunnel Token**:
+    *   In the "Install and run a connector" step, copy the **Tunnel Token** (the long alphanumeric string).
+3.  **Local Setup**:
+    *   Add the token to your `.env` file at the project root: `CLOUDFLARE_TUNNEL_TOKEN=your_token_here`.
+4.  **Configure Public Hostname**:
+    *   In the Tunnel settings on Cloudflare, go to **Public Hostname** -> **Add a hostname**.
+    *   **Hostname**: e.g., `api.yourdomain.com`.
+    *   **Service**: Type `HTTP`, URL `kraoq-backend:80`. (Note: We use port 80 because the Kubernetes Service exposes port 80 and maps it to the container's 3001).
+5.  **Security List**:
+    *   Note that the Terraform configuration automatically blocks all public ingress except SSH. All app traffic now flows through this outbound tunnel.
+
+## Step 6: GitOps Sync (ArgoCD)
 
 The Cloud-init script installed K3s and ArgoCD.
 
@@ -79,7 +98,7 @@ The Cloud-init script installed K3s and ArgoCD.
     kubectl get pods -n argocd
     ```
 3.  **Deploy Application**:
-    Copy your `backend/deployment.yaml`, `backend/pvc.yaml`, `backend/ingress.yaml`, and `database/deployment.yaml` to the server or apply them directly from the repo.
+    Copy your `backend/deployment.yaml`, `backend/pvc.yaml`, `backend/cloudflared.yaml`, and `database/deployment.yaml` to the server or apply them directly from the repo.
 
     *Using GitOps (ArgoCD):*
     1.  Edit `infrastructure/argocd/apps.yaml` and replace `YOUR_USERNAME` with your GitHub username.
@@ -94,11 +113,12 @@ The Cloud-init script installed K3s and ArgoCD.
       --from-literal=google-client-id=YOUR_GOOGLE_CLIENT_ID \
       --from-literal=google-client-secret=YOUR_GOOGLE_CLIENT_SECRET \
       --from-literal=session-secret=MakeThisALongRandomString \
-      --from-literal=audio-processor-api-key=your_secure_api_key_here
+      --from-literal=audio-processor-api-key=your_secure_api_key_here \
+      --from-literal=CLOUDFLARE_TUNNEL_TOKEN=your_token_here
       
-    # 3. Create Storage for Uploads and Ingress
+    # 3. Create Storage and Cloudflare Tunnel Agent
     kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/backend/pvc.yaml
-    kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/backend/ingress.yaml
+    kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/backend/cloudflared.yaml
       
     # 4. Connect ArgoCD to your repo
     kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/infrastructure/argocd/apps.yaml
@@ -117,6 +137,7 @@ The following sensitive credentials must be managed manually (either via the K8s
 | **Google Client ID** | `google-client-id` | OAuth 2.0 Client ID for Login |
 | **Google Client Secret** | `google-client-secret` | OAuth 2.0 Client Secret for Login |
 | **Session Secret** | `session-secret` | Key to sign session cookies |
+| **Cloudflare Token** | `CLOUDFLARE_TUNNEL_TOKEN` | Token to connect the Cloudflare Tunnel |
 
 ## Initial Setup: Google OAuth
 
@@ -124,10 +145,10 @@ To enable "Sign in with Google":
 1.  Go to [Google Cloud Console](https://console.cloud.google.com/).
 2.  Create a Project -> **APIs & Services** -> **Credentials**.
 3.  Create Credentials -> **OAuth Client ID** -> **Web Application**.
-4.  **Authorized Redirect URIs**: `https://<YOUR_PUBLIC_IP>/auth/google/callback` (Note: You must use HTTPS, accept the browser warning for self-signed certs during dev).
+4.  **Authorized Redirect URIs**: `https://api.yourdomain.com/auth/google/callback` (Use the actual domain configured in Cloudflare).
 5.  Copy the **Client ID** and **Client Secret** for the command above.
 
-## Step 6: Connect via VPN (WireGuard)
+## Step 7: Connect via VPN (WireGuard)
 
 To securely access your cluster (and for your local Audio Processor to talk to it, or vice versa if using a site-to-site setup):
 

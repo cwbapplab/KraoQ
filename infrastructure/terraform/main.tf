@@ -47,7 +47,7 @@ resource "oci_core_security_list" "kraoq_sl" {
     destination = "0.0.0.0/0"
   }
 
-  # SSH
+  # SSH (Management)
   ingress_security_rules {
     protocol = "6" # TCP
     source   = "0.0.0.0/0"
@@ -57,55 +57,8 @@ resource "oci_core_security_list" "kraoq_sl" {
     }
   }
 
-  # HTTP
-  ingress_security_rules {
-    protocol = "6"
-    source   = "0.0.0.0/0"
-    tcp_options {
-      max = 80
-      min = 80
-    }
-  }
-
-  # HTTPS
-  ingress_security_rules {
-    protocol = "6"
-    source   = "0.0.0.0/0"
-    tcp_options {
-      max = 443
-      min = 443
-    }
-  }
-
-  # K3s API
-  ingress_security_rules {
-    protocol = "6"
-    source   = "0.0.0.0/0"
-    tcp_options {
-      max = 6443
-      min = 6443
-    }
-  }
-  
-  # NodePorts (Optional, for development visibility)
-  ingress_security_rules {
-    protocol = "6"
-    source   = "0.0.0.0/0"
-    tcp_options {
-      max = 32767
-      min = 30000
-    }
-  }
-
-  # WireGuard VPN (UDP)
-  ingress_security_rules {
-    protocol = "17" # UDP
-    source   = "0.0.0.0/0"
-    udp_options {
-      max = 51820
-      min = 51820
-    }
-  }
+  # Note: Other ingress rules (HTTP/HTTPS/K3s) were removed in favor of Cloudflare Tunnel (cloudflared).
+  # Cloudflare Tunnel only requires outbound (egress) connectivity, which is handled by the 'all' egress rule above.
 }
 
 resource "oci_core_subnet" "kraoq_subnet" {
