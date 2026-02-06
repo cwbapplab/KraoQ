@@ -314,14 +314,34 @@ function App() {
         }
     };
 
-    // Monitor fullscreen changes (e.g. ESC key)
+    // Monitor fullscreen and keyboard events
     useEffect(() => {
         const handleFsChange = () => {
             setIsFullscreen(!!document.fullscreenElement);
         };
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                if (karaokeMode) {
+                    setKaraokeMode(false);
+                } else if (showSearchDropdown) {
+                    setShowSearchDropdown(false);
+                }
+            } else if (e.code === 'Space' && karaokeMode) {
+                e.preventDefault();
+                if (audioRef.current) {
+                    if (audioRef.current.paused) audioRef.current.play();
+                    else audioRef.current.pause();
+                    setShowControls(true);
+                }
+            }
+        };
         document.addEventListener('fullscreenchange', handleFsChange);
-        return () => document.removeEventListener('fullscreenchange', handleFsChange);
-    }, []);
+        window.addEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('fullscreenchange', handleFsChange);
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [karaokeMode, showSearchDropdown]);
 
     // Prevent body scroll when in Karaoke Mode
     useEffect(() => {
@@ -337,14 +357,14 @@ function App() {
     const [showControls, setShowControls] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
 
-    // Auto-hide controls after 2s of inactivity
+    // Auto-hide controls after 2s of inactivity (only if playing)
     useEffect(() => {
-        if (!showControls) return;
+        if (!showControls || !isPlaying) return;
         const timer = setTimeout(() => {
             setShowControls(false);
         }, 2000);
         return () => clearTimeout(timer);
-    }, [showControls]);
+    }, [showControls, isPlaying]);
 
     // Sync isPlaying with audio element
     useEffect(() => {
@@ -394,9 +414,9 @@ function App() {
 
     return (
         <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-8'}`}>
-            {/* Aurora Colors during Transition & Performance */}
-            {(karaokeMode || isTransitioning) && (
-                <div className={`fixed inset-0 z-0 transition-opacity duration-1000 ${isTransitioning ? 'opacity-40' : 'opacity-100'}`}>
+            {/* Aurora Colors during Transition only */}
+            {isTransitioning && !karaokeMode && (
+                <div className="fixed inset-0 z-0 opacity-40 transition-opacity duration-1000">
                     <AuroraBackground audioRef={audioRef} />
                 </div>
             )}
@@ -434,7 +454,7 @@ function App() {
                             shrink-0 transition-all duration-1000
                             ${transitionStage === 'hero' || transitionStage === 'fadeout'
                                 ? 'w-20 h-20 rounded-full shadow-lg'
-                                : (selectedSource === 'recent' ? 'w-10 h-10 rounded-full' : (selectedSource === 'dropdown' ? 'w-8 h-8 rounded' : 'w-24 h-24 rounded-xl'))}
+                                : (selectedSource === 'recent' ? 'w-10 h-10 rounded-full' : (selectedSource === 'dropdown' ? 'w-12 h-12 rounded' : 'w-24 h-24 rounded-xl'))}
                             object-cover
                         `}
                     />
@@ -514,7 +534,7 @@ function App() {
                                 <Search className="absolute left-6 text-text-muted w-6 h-6 group-focus-within:text-primary transition-colors" />
                                 <input
                                     type="text"
-                                    className="w-full bg-black/40 border border-white/5 text-white pl-16 pr-6 py-5 rounded-2xl text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50"
+                                    className="w-full bg-black/40 border border-white/5 text-white pl-16 pr-6 py-5 rounded-2xl text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50 select-text"
                                     placeholder="Paste YouTube link or search song..."
                                     value={query}
                                     onFocus={() => setShowSearchDropdown(true)}
@@ -538,13 +558,13 @@ function App() {
                                                         .map(s => (
                                                             <div
                                                                 key={s.currentSong.videoId}
-                                                                className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group search-dropdown-item w-fit max-w-full"
+                                                                className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group search-dropdown-item"
                                                                 onClick={(e) => {
                                                                     processSong(s.currentSong.videoId, s.currentSong.thumbnail, e);
                                                                     setShowSearchDropdown(false);
                                                                 }}
                                                             >
-                                                                <img src={s.currentSong.thumbnail} className="w-8 h-8 rounded object-cover" />
+                                                                <img src={s.currentSong.thumbnail} className="w-12 h-12 rounded object-cover" />
                                                                 <div className="flex-1 truncate">
                                                                     <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.currentSong.title}</p>
                                                                     <p className="text-xs text-text-muted truncate">{s.currentSong.artist}</p>
@@ -627,7 +647,7 @@ function App() {
                                     key={video.videoId}
                                     onClick={(e) => processSong(video.videoId, video.thumbnail, e)}
                                     className={`
-                                        bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer transition-all duration-1000 w-fit max-w-full
+                                        bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer transition-all duration-1000 w-full
                                         ${isTransitioning ? 'blur-2xl opacity-5 scale-90 grayscale pointer-events-none' : 'hover:bg-white/5 hover:scale-[1.02] border-white/5 group'}
                                         ${video.isCached && !isTransitioning ? 'border-primary/40 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : ''}
                                     `}
@@ -717,6 +737,7 @@ function App() {
                          py-8
                          ${showControls ? 'mb-4' : 'mb-0'}
                      `}>
+                        <AuroraBackground audioRef={audioRef} />
                         {/* Play/Pause Overlay */}
                         <div className={`
                             absolute inset-0 z-20 flex items-center justify-center transition-all duration-300
@@ -725,10 +746,11 @@ function App() {
                             <div
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    if (audioRef.current.paused) audioRef.current.play();
-                                    else audioRef.current.pause();
-                                    // Auto-hide after 200ms as requested
-                                    setTimeout(() => setShowControls(false), 200);
+                                    if (audioRef.current.paused) {
+                                        audioRef.current.play();
+                                    } else {
+                                        audioRef.current.pause();
+                                    }
                                 }}
                                 className="w-24 h-24 flex items-center justify-center bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white shadow-2xl transform active:scale-90 transition-all cursor-pointer hover:bg-white/20"
                             >
@@ -815,7 +837,7 @@ function App() {
                             className="absolute top-4 right-4 text-text-muted hover:text-white"
                             onClick={(e) => { e.stopPropagation(); setKaraokeMode(false); }}
                         >
-                            ✕ Close
+                            ✕
                         </button>
                     )}
                 </div>
