@@ -156,6 +156,30 @@ function App() {
 
     // Helper Logic for Display
     const [showControls, setShowControls] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
+
+    // Auto-hide controls after 2s of inactivity
+    useEffect(() => {
+        if (!showControls) return;
+        const timer = setTimeout(() => {
+            setShowControls(false);
+        }, 2000);
+        return () => clearTimeout(timer);
+    }, [showControls]);
+
+    // Sync isPlaying with audio element
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        const setPlaying = () => setIsPlaying(true);
+        const setPaused = () => setIsPlaying(false);
+        audio.addEventListener('play', setPlaying);
+        audio.addEventListener('pause', setPaused);
+        return () => {
+            audio.removeEventListener('play', setPlaying);
+            audio.removeEventListener('pause', setPaused);
+        };
+    }, [currentSong, karaokeMode]);
 
     // Helper Logic for Lyrics Display
     const currentLine = activeLineIndex !== -1 ? lyricsData[activeLineIndex] : null;
@@ -294,7 +318,8 @@ function App() {
                 mt-16 bg-card-bg/90 rounded-3xl border border-white/10 shadow-2xl overflow-hidden relative
                 ${isFullscreen ? 'fixed inset-0 w-screen h-screen z-50 rounded-none m-0 p-8 flex flex-col justify-center bg-black' : 'p-12'}
             `}
-                    onClick={() => isFullscreen && setShowControls(prev => !prev)} // Toggle controls only in FS
+                    onClick={() => setShowControls(prev => !prev)} // Toggle controls in all modes
+                    onDoubleClick={toggleFullscreen}
                 >
                     <div className={`
                  relative bg-black rounded-3xl overflow-hidden flex flex-col items-center justify-center transition-all duration-300
@@ -302,7 +327,26 @@ function App() {
                  before:content-[''] before:absolute before:inset-0 before:bg-[radial-gradient(circle,var(--primary)_0%,transparent_60%)] before:opacity-10 before:animate-pulse
                  ${(!isFullscreen || showControls) ? 'mb-8' : 'mb-0'} 
              `}>
-                        <div className={`text-center w-full z-10 flex flex-col justify-evenly h-full transition-all duration-300`}>
+                        {/* Play/Pause Overlay */}
+                        <div className={`
+                            absolute inset-0 z-20 flex items-center justify-center transition-all duration-300
+                            ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
+                        `}>
+                            <div
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (audioRef.current.paused) audioRef.current.play();
+                                    else audioRef.current.pause();
+                                    // Auto-hide after 200ms as requested
+                                    setTimeout(() => setShowControls(false), 200);
+                                }}
+                                className="w-24 h-24 flex items-center justify-center bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white shadow-2xl transform active:scale-90 transition-all cursor-pointer hover:bg-white/20"
+                            >
+                                {isPlaying ? <Pause size={48} fill="currentColor" /> : <Play size={48} fill="currentColor" className="ml-2" />}
+                            </div>
+                        </div>
+
+                        <div className={`text-center w-full z-10 flex flex-col justify-evenly h-full transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
                             <div className={`font-bold text-white/30 transition-all ${isFullscreen ? 'text-5xl' : 'text-2xl'}`}>
                                 {prevLine ? prevLine.text : ""}
                             </div>
