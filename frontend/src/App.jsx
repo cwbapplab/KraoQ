@@ -23,6 +23,7 @@ function App() {
     const [selectedRect, setSelectedRect] = useState(null);
     const [transitionStage, setTransitionStage] = useState('idle'); // idle, start, hero
     const [selectedSource, setSelectedSource] = useState(null); // 'search' or 'recent'
+    const [isProcessing, setIsProcessing] = useState(false);
     const [headerRect, setHeaderRect] = useState(null);
     const headerRef = useRef(null);
 
@@ -136,12 +137,18 @@ function App() {
 
         // Immediately set info for transition tracking
         let title = "Loading...";
+        let artist = "";
         const foundInSearch = searchResults.find(v => v.videoId === videoId);
         const foundInRecent = recentSongs.find(s => s.videoId === videoId);
-        if (foundInSearch) title = foundInSearch.title;
-        else if (foundInRecent) title = foundInRecent.title;
+        if (foundInSearch) {
+            title = foundInSearch.title;
+            artist = foundInSearch.artists || foundInSearch.channel || "";
+        } else if (foundInRecent) {
+            title = foundInRecent.title;
+            artist = foundInRecent.artist || "";
+        }
 
-        setCurrentSong({ videoId, thumbnail, title });
+        setCurrentSong({ videoId, thumbnail, title, artist });
         setActiveLineIndex(-1); // Reset for new song
 
         if (e) {
@@ -178,6 +185,7 @@ function App() {
                     setSelectedRect(null);
                     setHeaderRect(null);
                     setSelectedSource(null);
+                    setIsProcessing(false);
                 }, 600); // Wait for fadeout animation
             }, remaining);
         };
@@ -207,6 +215,7 @@ function App() {
 
         setStatus("doing our magic...");
         setKaraokeMode(false);
+        setIsProcessing(true);
         setSearchResults([]);
 
         try {
@@ -277,6 +286,7 @@ function App() {
             setStatus("Wait, something went wrong...");
             setIsTransitioning(false);
             setTransitionStage('idle');
+            setIsProcessing(false);
         }
     };
 
@@ -384,6 +394,13 @@ function App() {
 
     return (
         <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-8'}`}>
+            {/* Aurora Colors during Transition & Performance */}
+            {(karaokeMode || isTransitioning) && (
+                <div className={`fixed inset-0 z-0 transition-opacity duration-1000 ${isTransitioning ? 'opacity-40' : 'opacity-100'}`}>
+                    <AuroraBackground audioRef={audioRef} />
+                </div>
+            )}
+
             {/* Global Transition Overlay Backdrop */}
             {isTransitioning && (
                 <div className="fixed inset-0 bg-black/70 backdrop-blur-3xl z-[150] animate-in fade-in duration-1000" />
@@ -430,6 +447,16 @@ function App() {
                         `}>
                             {currentSong.title}
                         </h2>
+                        {currentSong.artist && (
+                            <p className={`
+                                text-text-muted transition-all duration-1000
+                                ${transitionStage === 'hero' || transitionStage === 'fadeout'
+                                    ? 'text-lg mt-0.5'
+                                    : 'text-xs truncate'}
+                            `}>
+                                {currentSong.artist}
+                            </p>
+                        )}
                         {/* Preparing Status */}
                         {(transitionStage === 'hero' || transitionStage === 'fadeout') && (
                             <p className={`text-primary-hover font-bold animate-pulse mt-1 flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
@@ -437,6 +464,12 @@ function App() {
                             </p>
                         )}
                     </div>
+                    {/* Progress Circle for API calls */}
+                    {isProcessing && (transitionStage === 'hero' || transitionStage === 'fadeout') && (
+                        <div className="ml-auto shrink-0 animate-in fade-in zoom-in duration-500">
+                            <div className="w-10 h-10 rounded-full border-4 border-white/5 border-t-primary animate-spin shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -650,7 +683,8 @@ function App() {
                                 <img src={song.thumbnail} alt={song.title} className="w-10 h-10 rounded-full object-cover border border-white/10" />
                                 <div className="flex flex-col">
                                     <span className="text-sm font-medium text-white/80 group-hover:text-white max-w-[150px] truncate">{song.title}</span>
-                                    {song.hasLyrics && <span className="text-[9px] text-green-400 font-bold uppercase tracking-tighter">Lyrics</span>}
+                                    {song.artist && <span className="text-[10px] text-white/50 group-hover:text-white/70 max-w-[150px] truncate">{song.artist}</span>}
+                                    {song.hasLyrics && <span className="text-[9px] text-green-400 font-bold uppercase tracking-tighter mt-0.5">Lyrics</span>}
                                 </div>
                                 <button
                                     onClick={(e) => {
@@ -681,9 +715,8 @@ function App() {
                     <div className={`
                          relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-all duration-300
                          py-8
-                         ${showControls ? 'mb-4' : 'mb-0'} 
+                         ${showControls ? 'mb-4' : 'mb-0'}
                      `}>
-                        <AuroraBackground audioRef={audioRef} />
                         {/* Play/Pause Overlay */}
                         <div className={`
                             absolute inset-0 z-20 flex items-center justify-center transition-all duration-300
