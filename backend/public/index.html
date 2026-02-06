@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KraoQ - AI Karaoke Generator</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #a855f7;
+        }
+
+        body {
+            font-family: 'Outfit', 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            padding: 2rem;
+            z-index: 1;
+        }
+
+        /* Subtle background glow */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -10%;
+            left: -10%;
+            width: 120%;
+            height: 120%;
+            background: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 50%);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            font-size: 4rem;
+            font-weight: 800;
+            margin: 0;
+            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.03em;
+            text-transform: uppercase;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            margin-top: 0.5rem;
+            font-weight: 300;
+        }
+
+        .upload-card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border-radius: 1.5rem;
+            padding: 4rem;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .upload-card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .file-input-wrapper {
+            margin-bottom: 2.5rem;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .file-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1.25rem 2.5rem;
+            background: rgba(99, 102, 241, 0.05);
+            color: var(--primary);
+            border: 2px dashed var(--primary);
+            border-radius: 1rem;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .file-label:hover {
+            background: rgba(99, 102, 241, 0.1);
+            border-style: solid;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            color: white;
+            border: none;
+            padding: 1.25rem 3rem;
+            border-radius: 1rem;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 10px 20px -5px rgba(99, 102, 241, 0.4);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 20px 30px -10px rgba(99, 102, 241, 0.6);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        #status {
+            margin-top: 2rem;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        /* Karaoke Player Styles */
+        .karaoke-mode {
+            display: none;
+            margin-top: 4rem;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 2rem;
+            padding: 3rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.6);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .karaoke-video-box {
+            width: 100%;
+            height: 400px;
+            background: #000;
+            border-radius: 1.5rem;
+            margin-bottom: 2rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+        }
+
+        /* Pulsing background for video box */
+        .karaoke-video-box::before {
+            content: '';
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, var(--primary) 0%, transparent 60%);
+            opacity: 0.05;
+            animation: pulse 8s ease-in-out infinite alternate;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: translate(-25%, -25%) scale(1);
+            }
+
+            100% {
+                transform: translate(0%, 0%) scale(1.2);
+            }
+        }
+
+        .lyrics-display {
+            text-align: center;
+            z-index: 10;
+            width: 90%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 1.5rem;
+        }
+
+        .lyric-line {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: rgba(255, 255, 255, 0.3);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            line-height: 1.2;
+            word-wrap: break-word;
+        }
+
+        .lyric-line.active {
+            color: var(--text);
+            font-size: 2.8rem;
+            text-shadow: 0 0 20px rgba(99, 102, 241, 0.8);
+            transform: scale(1.1);
+        }
+
+        .lyric-line.next {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 2.2rem;
+        }
+
+        .audio-controls {
+            width: 100%;
+        }
+
+        audio {
+            width: 100%;
+            height: 50px;
+            border-radius: 1rem;
+            filter: invert(100%) hue-rotate(180deg) brightness(1.5);
+        }
+
+        /* Results Tabs/Grid */
+        .results-grid {
+            display: none;
+            margin-top: 3rem;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .result-card {
+            background: rgba(30, 41, 59, 0.5);
+            backdrop-filter: blur(8px);
+            border-radius: 1.25rem;
+            padding: 2rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .result-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 1.5rem;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        textarea {
+            width: 100%;
+            height: 250px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 0.75rem;
+            color: var(--text-muted);
+            padding: 1.5rem;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.85rem;
+            resize: none;
+            line-height: 1.6;
+        }
+
+        .loader {
+            display: inline-block;
+            width: 28px;
+            height: 28px;
+            border: 3px solid rgba(255, 255, 255, 0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .copy-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-muted);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .download-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+            text-decoration: none;
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            font-weight: 600;
+            transition: all 0.2s;
+            margin-top: 1rem;
+        }
+
+        .download-btn:hover {
+            background: var(--primary);
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>KraoQ</h1>
+            <p class="subtitle">Sing along with AI Intelligence</p>
+        </div>
+
+        <!-- Mode Toggle -->
+        <div style="display: flex; justify-content: center; gap: 1rem; margin-bottom: 2rem;">
+            <button class="btn" id="modeSearch"
+                style="background: var(--card-bg); border: 1px solid rgba(255,255,255,0.1);">Search Song</button>
+            <button class="btn" id="modeUpload"
+                style="background: var(--card-bg); border: 1px solid rgba(255,255,255,0.1); opacity: 0.6;">Upload
+                File</button>
+        </div>
+
+        <!-- SEARCH SECTION -->
+        <div class="upload-card" id="searchSection">
+            <div style="display: flex; gap: 1rem; margin-bottom: 2rem;">
+                <input type="text" id="searchInput" placeholder="Search for a song..."
+                    style="flex: 1; padding: 1rem; border-radius: 0.5rem; border: none; font-size: 1.1rem;">
+                <button class="btn" id="searchBtn">Search</button>
+            </div>
+
+            <div id="searchResults"
+                style="display: flex; flex-direction: column; gap: 1rem; max-height: 400px; overflow-y: auto;">
+                <!-- Results go here -->
+            </div>
+        </div>
+
+        <!-- UPLOAD SECTION -->
+        <div class="upload-card" id="uploadSection" style="display: none;">
+            <form id="uploadForm">
+                <div class="file-input-wrapper">
+                    <label for="audioFile" class="file-label">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4a2 2 0 0 1 2-2h14z"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Upload Original Song
+                    </label>
+                    <input type="file" id="audioFile" accept=".mp3,.wav,.m4a" required>
+                    <div id="fileNameDisplay" style="margin-top: 1rem; color: var(--primary); font-weight: 500;"></div>
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn">
+                    Start Magic
+                </button>
+            </form>
+        </div>
+
+        <div id="status" style="text-align: center; margin-top: 2rem;"></div>
+
+        <!-- NEW: Karaoke Player Section -->
+        <div id="karaokeMode" class="karaoke-mode">
+            <div class="karaoke-video-box">
+                <div class="lyrics-display" id="lyricsDisplay">
+                    <div class="lyric-line" id="prevLine"></div>
+                    <div class="lyric-line active" id="currLine">Ready?</div>
+                    <div class="lyric-line next" id="nextLine">Select a song to begin</div>
+                </div>
+            </div>
+
+            <div class="audio-controls">
+                <audio id="mainAudio" controls>
+                    <source id="audioSource" src="" type="audio/mpeg">
+                </audio>
+                <div style="margin-top: 1rem; text-align: right;">
+                    <span style="color: var(--text-muted); font-size: 0.9rem;">Mode: <strong
+                            style="color: var(--accent);">Instrumental</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <div id="resultsGrid" class="results-grid">
+            <div class="result-card">
+                <h3>Instrumental <span id="instLabel"></span></h3>
+                <div id="instDownloadContainer"></div>
+            </div>
+
+            <div class="result-card">
+                <h3>LRC Content <button class="copy-btn" onclick="copyToClipboard('lrcContent')">Copy</button></h3>
+                <textarea id="lrcContent" readonly></textarea>
+            </div>
+
+            <div class="result-card">
+                <h3>SRT Content <button class="copy-btn" onclick="copyToClipboard('srtContent')">Copy</button></h3>
+                <textarea id="srtContent" readonly></textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // TABS Logic
+        const modeSearch = document.getElementById('modeSearch');
+        const modeUpload = document.getElementById('modeUpload');
+        const searchSection = document.getElementById('searchSection');
+        const uploadSection = document.getElementById('uploadSection');
+
+        modeSearch.addEventListener('click', () => {
+            searchSection.style.display = 'block';
+            uploadSection.style.display = 'none';
+            modeSearch.style.background = 'linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%)';
+            modeSearch.style.opacity = '1';
+            modeUpload.style.background = 'var(--card-bg)';
+            modeUpload.style.opacity = '0.6';
+        });
+
+        modeUpload.addEventListener('click', () => {
+            searchSection.style.display = 'none';
+            uploadSection.style.display = 'block';
+            modeUpload.style.background = 'linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%)';
+            modeUpload.style.opacity = '1';
+            modeSearch.style.background = 'var(--card-bg)';
+            modeSearch.style.opacity = '0.6';
+        });
+
+        // Initialize Tabs
+        modeSearch.click();
+
+        // SEARCH Logic
+        const searchInput = document.getElementById('searchInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const searchResults = document.getElementById('searchResults');
+
+        searchBtn.addEventListener('click', async () => {
+            const query = searchInput.value;
+            if (!query) return;
+
+            searchBtn.disabled = true;
+            searchBtn.textContent = 'Searching...';
+            searchResults.innerHTML = '';
+
+            try {
+                const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                const data = await res.json();
+
+                if (data.error) throw new Error(data.error);
+
+                data.forEach(song => {
+                    const item = document.createElement('div');
+                    item.style.cssText = `
+                        background: rgba(255,255,255,0.05); 
+                        padding: 1rem; 
+                        border-radius: 0.5rem; 
+                        display: flex; 
+                        align-items: center; 
+                        gap: 1rem;
+                        transition: background 0.2s;
+                    `;
+
+                    const badge = song.hasLyrics
+                        ? `<span style="background: #10b981; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; margin-left: 8px;">LYRICS</span>`
+                        : '';
+
+                    item.innerHTML = `
+                        <img src="${song.thumbnail}" style="width: 50px; height: 50px; border-radius: 0.25rem;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; display: flex; align-items: center;">
+                                ${song.title} ${badge}
+                            </div>
+                            <div style="font-size: 0.9rem; color: var(--text-muted);">${song.artists} • ${song.duration}</div>
+                        </div>
+                        <button class="btn" style="padding: 0.5rem 1rem; font-size: 0.9rem;" onclick="processSong('${song.videoId}')">Select</button>
+                    `;
+                    searchResults.appendChild(item);
+                });
+
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                searchBtn.disabled = false;
+                searchBtn.textContent = 'Search';
+            }
+        });
+
+        // PROCESS Logic
+        const statusDiv = document.getElementById('status');
+        const resultsGrid = document.getElementById('resultsGrid');
+        const karaokeMode = document.getElementById('karaokeMode');
+        const mainAudio = document.getElementById('mainAudio');
+        const audioSource = document.getElementById('audioSource');
+
+        async function processSong(videoId) {
+            searchResults.innerHTML = ''; // Clear results
+            statusDiv.innerHTML = '<span class="loader"></span> downloading, fetching lyrics & separating instrumental...';
+            resultsGrid.style.display = 'none';
+            karaokeMode.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/process-yt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ videoId })
+                });
+
+                const result = await res.json();
+                if (!res.ok) throw new Error(result.error);
+
+                // Render Results
+                renderResults(result);
+
+            } catch (e) {
+                statusDiv.textContent = "Error: " + e.message;
+            }
+        }
+
+        // UPLOAD Logic Matches
+        const fileInput = document.getElementById('audioFile');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const form = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) fileNameDisplay.textContent = e.target.files[0].name;
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!fileInput.files[0]) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            submitBtn.disabled = true;
+            statusDiv.innerHTML = '<span class="loader"></span> Processing upload...';
+            resultsGrid.style.display = 'none';
+            karaokeMode.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error);
+                renderResults(result);
+            } catch (error) {
+                statusDiv.textContent = "Error: " + error.message;
+            } finally {
+                submitBtn.disabled = false;
+            }
+        });
+
+        function renderResults(result) {
+            document.getElementById('lrcContent').value = result.data.lrc;
+            document.getElementById('srtContent').value = result.data.srt;
+            parseLRC(result.data.lrc);
+
+            // Store info for display
+            if (result.data.title) {
+                currentSongInfo = `${result.data.title} - ${result.data.artist}`;
+            } else {
+                currentSongInfo = "Unknown Song";
+            }
+
+            if (result.data.instrumentalUrl) {
+                audioSource.src = result.data.instrumentalUrl;
+                mainAudio.load();
+                karaokeMode.style.display = 'block';
+                document.getElementById('instDownloadContainer').innerHTML = `
+                    <a href="${result.data.instrumentalUrl}" download class="download-btn">Download Instrumental</a>
+                `;
+            }
+            statusDiv.textContent = "Done! Enjoy.";
+            resultsGrid.style.display = 'grid';
+            karaokeMode.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // LYRICS Logic
+        let lyricsData = [];
+        let currentSongInfo = "";
+
+        function parseLRC(lrcText) {
+            lyricsData = [];
+            const lines = lrcText.split('\n');
+            const timeReg = /\[(\d+):(\d+\.\d+)\]/;
+
+            lines.forEach(line => {
+                const match = timeReg.exec(line);
+                if (match) {
+                    const minutes = parseInt(match[1]);
+                    const seconds = parseFloat(match[2]);
+                    const time = minutes * 60 + seconds;
+                    const text = line.replace(timeReg, '').trim();
+                    if (text) lyricsData.push({ time, text });
+                }
+            });
+            lyricsData.sort((a, b) => a.time - b.time);
+        }
+
+        mainAudio.addEventListener('timeupdate', () => {
+            if (lyricsData.length === 0) return;
+            const currentTime = mainAudio.currentTime;
+            let currentIdx = -1;
+
+            // Find current active index
+            for (let i = 0; i < lyricsData.length; i++) {
+                if (currentTime >= lyricsData[i].time) currentIdx = i;
+                else break;
+            }
+
+            const prevEl = document.getElementById('prevLine');
+            const currEl = document.getElementById('currLine');
+            const nextEl = document.getElementById('nextLine');
+
+            if (currentIdx !== -1) {
+                // Determine if we are in a long gap (interlude)
+                // Check gap between current line start and next line start, or check audio position?
+                // Logic: If we are playing line N, and line N+1 is far away...
+                // Actually usually we just show the current line. 
+                // To show countdown, we need to know if we are "waiting" for the next line. 
+                // If we are significantly past the "read time" of current line (approx) it's hard.
+                // Better approach: Check if we are between the previous line and the current line (which hasn't started yet).
+                // Wait, logic above says: currentIdx is line that HAS started.
+
+                prevEl.textContent = currentIdx > 0 ? lyricsData[currentIdx - 1].text : "";
+                currEl.textContent = lyricsData[currentIdx].text;
+                nextEl.textContent = currentIdx < lyricsData.length - 1 ? lyricsData[currentIdx + 1].text : "";
+                currEl.classList.add('active');
+
+                // Check for upcoming long gap AFTER this line
+                if (currentIdx < lyricsData.length - 1) {
+                    const timeUntilNext = lyricsData[currentIdx + 1].time - currentTime;
+                    const gap = lyricsData[currentIdx + 1].time - lyricsData[currentIdx].time;
+
+                    if (gap > 8) {
+                        // If we are in the "wait" phase (e.g. current line finished singing approx)
+                        if (timeUntilNext > 0 && timeUntilNext < 4) {
+                            // Countdown for the NEXT phrase
+                            const dots = "• ".repeat(Math.ceil(timeUntilNext));
+                            // Prepend to the NEXT line preview
+                            nextEl.textContent = dots + lyricsData[currentIdx + 1].text;
+                            // Optionally, we could clear the current line if it's been a while?
+                            // But keeping it is safer for reading.
+                        }
+                    }
+                }
+            } else {
+                // Intro case
+                prevEl.textContent = "";
+                const firstLineTime = lyricsData[0].time;
+                const timeToStart = firstLineTime - currentTime;
+
+                if (timeToStart > 0 && timeToStart < 5) {
+                    const dots = "• ".repeat(Math.ceil(timeToStart));
+                    currEl.textContent = "Get Ready...";
+                    nextEl.textContent = dots + lyricsData[0].text;
+                } else {
+                    currEl.textContent = `Now Singing: ${currentSongInfo}`;
+                    currEl.style.fontSize = "1.5rem"; // Make it slightly smaller/different specifically for this info?
+                    nextEl.textContent = lyricsData[0].text;
+                }
+            }
+        });
+
+        function copyToClipboard(elementId) {
+            const copyText = document.getElementById(elementId);
+            copyText.select();
+            navigator.clipboard.writeText(copyText.value);
+            alert("Copied!");
+        }
+    </script>
+</body>
+
+</html>
