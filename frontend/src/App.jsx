@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight } from 'lucide-react';
 import AuroraBackground from './components/AuroraBackground';
 
 const API_URL = "http://localhost:3001";
@@ -527,14 +527,14 @@ function App() {
             {/* SEARCH SECTION */}
             {!karaokeMode && (
                 <div className={`transition-all duration-1000 ${showSearchDropdown ? 'z-[60]' : 'z-20'} relative animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150`}>
-                    <div className={`bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all ${isTransitioning ? 'pointer-events-none' : ''}`}>
+                    <div className={`bg-card-bg/50 backdrop-blur-xl p-4 sm:p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all ${isTransitioning ? 'pointer-events-none' : ''}`}>
                         {/* Search Input */}
                         <div className={`relative z-10 transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0 scale-95' : ''}`}>
                             <div className="relative flex items-center">
-                                <Search className="absolute left-6 text-text-muted w-6 h-6 group-focus-within:text-primary transition-colors" />
+                                <Search className="absolute left-4 sm:left-6 text-text-muted w-5 h-5 sm:w-6 sm:h-6 group-focus-within:text-primary transition-colors" />
                                 <input
                                     type="text"
-                                    className="w-full bg-black/40 border border-white/5 text-white pl-16 pr-6 py-5 rounded-2xl text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50 select-text"
+                                    className="w-full bg-black/40 border border-white/5 text-white pl-12 sm:pl-16 pr-16 sm:pr-20 py-4 sm:py-5 rounded-2xl text-base sm:text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50 select-text"
                                     placeholder="Paste YouTube link or search song..."
                                     value={query}
                                     onFocus={() => setShowSearchDropdown(true)}
@@ -622,9 +622,9 @@ function App() {
                                 <button
                                     onClick={searchMusic}
                                     disabled={isSearching}
-                                    className="absolute right-3 bg-primary hover:bg-primary-hover text-white px-8 py-3 rounded-xl font-medium transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20"
+                                    className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white/5 hover:bg-primary text-white rounded-xl transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10 hover:border-primary/50 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] group/btn"
                                 >
-                                    {isSearching ? <span className="loader scale-50"></span> : "Go"}
+                                    {isSearching ? <span className="loader scale-50"></span> : <ArrowRight className="w-5 h-5 sm:w-6 sm:h-6 transition-transform group-hover/btn:translate-x-0.5" />}
                                 </button>
                             </div>
                         </div>
