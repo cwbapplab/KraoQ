@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2 } from 'lucide-react';
 import AuroraBackground from './components/AuroraBackground';
 
 const API_URL = "http://localhost:3001";
@@ -25,6 +25,8 @@ function App() {
     const [selectedSource, setSelectedSource] = useState(null); // 'search' or 'recent'
     const [isProcessing, setIsProcessing] = useState(false);
     const [suggestions, setSuggestions] = useState([]);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [searchLimit, setSearchLimit] = useState(20);
     const [headerRect, setHeaderRect] = useState(null);
     const headerRef = useRef(null);
 
@@ -87,6 +89,60 @@ function App() {
         return () => clearTimeout(timer);
     }, [query]);
 
+    const performSearch = async (searchQuery, limit, skip = 0, isAppending = false) => {
+        if (!isAppending) {
+            setIsSearching(true);
+            setSearchResults([]);
+            setShowSearchDropdown(false);
+        } else {
+            setIsLoadingMore(true);
+        }
+
+        try {
+            const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(searchQuery)}&limit=${limit}&skip=${skip}`);
+            const data = await res.json();
+            if (data.error) throw new Error(data.error);
+
+            // Find local matches in cache (only needed for first page)
+            let merged = [];
+            if (!isAppending) {
+                const localMatches = Object.values(songCache)
+                    .filter(s =>
+                        s.currentSong.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        s.currentSong.artist.toLowerCase().includes(searchQuery.toLowerCase())
+                    )
+                    .map(s => ({
+                        videoId: s.currentSong.videoId,
+                        title: s.currentSong.title,
+                        artists: s.currentSong.artist,
+                        thumbnail: s.currentSong.thumbnail,
+                        hasLyrics: true,
+                        isCached: true
+                    }));
+
+                const videoIds = new Set(localMatches.map(m => m.videoId));
+                merged = [
+                    ...localMatches,
+                    ...data.filter(item => !videoIds.has(item.videoId))
+                ];
+            } else {
+                // Just append new data, filtering out any duplicates against existing results
+                const existingIds = new Set(searchResults.map(m => m.videoId));
+                merged = [
+                    ...searchResults,
+                    ...data.filter(item => !existingIds.has(item.videoId))
+                ];
+            }
+
+            setSearchResults(merged);
+        } catch (e) {
+            setStatus("Error: " + e.message);
+        } finally {
+            setIsSearching(false);
+            setIsLoadingMore(false);
+        }
+    };
+
     const searchMusic = async () => {
         if (!query) return;
 
@@ -107,47 +163,14 @@ function App() {
             return newHistory;
         });
 
-        setIsSearching(true);
-        setSearchResults([]);
-        setShowSearchDropdown(false);
-        try {
-            const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`);
-            const data = await res.json();
-            if (data.error) throw new Error(data.error);
-
-            // Find local matches in cache
-            const localMatches = Object.values(songCache)
-                .filter(s =>
-                    s.currentSong.title.toLowerCase().includes(query.toLowerCase()) ||
-                    s.currentSong.artist.toLowerCase().includes(query.toLowerCase())
-                )
-                .map(s => ({
-                    videoId: s.currentSong.videoId,
-                    title: s.currentSong.title,
-                    artists: s.currentSong.artist,
-                    thumbnail: s.currentSong.thumbnail,
-                    hasLyrics: true,
-                    isCached: true // Extra flag for highlighting
-                }));
-
-            // Merge and remove duplicates (prefer local)
-            const videoIds = new Set(localMatches.map(m => m.videoId));
-            const merged = [
-                ...localMatches,
-                ...data.filter(item => !videoIds.has(item.videoId))
-            ];
-
-            setSearchResults(merged);
-        } catch (e) {
-            setStatus("Error: " + e.message);
-        } finally {
-            setIsSearching(false);
-        }
+        setSearchLimit(20);
+        performSearch(query, 20, 0, false);
     };
 
     const processSong = async (videoIdInput, thumbnail = null, e = null) => {
         // Handle variations (old history or direct pass)
         const videoId = (typeof videoIdInput === 'string' ? videoIdInput : (videoIdInput?.videoId || videoIdInput?.id));
+        const songTitle = (typeof videoIdInput === 'object' ? (videoIdInput.title || videoIdInput.name) : null);
 
         if (!videoId) {
             setStatus("Error: Invalid Video ID");
@@ -303,7 +326,16 @@ function App() {
 
         } catch (e) {
             console.error(e);
-            setStatus("Wait, something went wrong...");
+
+            // ERROR RECOVERY - Redirect to search
+            if (songTitle) {
+                setStatus(`Lyrics missing for "${songTitle}". Showing other versions...`);
+                setQuery(songTitle);
+                performSearch(songTitle, 20, 0, false);
+            } else {
+                setStatus("Error: " + (e.message || "Failed to load song"));
+            }
+
             setIsTransitioning(false);
             setTransitionStage('idle');
             setIsProcessing(false);
@@ -580,7 +612,7 @@ function App() {
                                                                 key={s.currentSong.videoId}
                                                                 className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group search-dropdown-item"
                                                                 onClick={(e) => {
-                                                                    processSong(s.currentSong.videoId, s.currentSong.thumbnail, e);
+                                                                    processSong(s.currentSong, s.currentSong.thumbnail, e);
                                                                     setShowSearchDropdown(false);
                                                                 }}
                                                             >
@@ -605,7 +637,7 @@ function App() {
                                                         key={`${s.videoId}-${i}`}
                                                         className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group search-dropdown-item"
                                                         onClick={(e) => {
-                                                            processSong(s.videoId, s.thumbnail, e);
+                                                            processSong(s, s.thumbnail, e);
                                                             setShowSearchDropdown(false);
                                                         }}
                                                     >
@@ -667,7 +699,7 @@ function App() {
                                     disabled={isSearching}
                                     className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 flex items-center justify-center bg-white/5 hover:bg-primary text-white rounded-xl transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10 hover:border-primary/50 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] group/btn"
                                 >
-                                    {isSearching ? <span className="loader scale-50"></span> : <ArrowRight className="w-5 h-5 sm:w-6 sm:h-6 transition-transform group-hover/btn:translate-x-0.5" />}
+                                    {isSearching ? <Loader2 className="animate-spin w-5 h-5 sm:w-6 sm:h-6" /> : <ArrowRight className="w-5 h-5 sm:w-6 sm:h-6 transition-transform group-hover/btn:translate-x-0.5" />}
                                 </button>
                             </div>
                         </div>
@@ -688,7 +720,7 @@ function App() {
                             {searchResults.map((video) => (
                                 <div
                                     key={video.videoId}
-                                    onClick={(e) => processSong(video.videoId, video.thumbnail, e)}
+                                    onClick={(e) => processSong(video, video.thumbnail, e)}
                                     className={`
                                         bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer transition-all duration-1000 w-full
                                         ${isTransitioning ? 'blur-2xl opacity-5 scale-90 grayscale pointer-events-none' : 'hover:bg-white/5 hover:scale-[1.02] border-white/5 group'}
@@ -739,7 +771,7 @@ function App() {
                         {recentSongs.map((song, i) => (
                             <div
                                 key={`${song.videoId}-${i}`}
-                                onClick={(e) => processSong(song.videoId, song.thumbnail, e)}
+                                onClick={(e) => processSong(song, song.thumbnail, e)}
                                 className={`
                                     inline-flex p-3 pr-6 rounded-full items-center gap-3 cursor-pointer transition-all duration-700 shrink-0
                                     ${isTransitioning ? 'blur-2xl opacity-0 grayscale scale-50 pointer-events-none' : 'bg-card-bg/50 border border-white/5 hover:border-white/20 hover:bg-white/10 active:scale-95 group'}

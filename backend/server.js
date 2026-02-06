@@ -108,7 +108,22 @@ app.get('/api/search', async (req, res) => {
 
     try {
         const results = await runPythonHelper('search.py', [query]);
-        res.json(safeParseJSON(results));
+        let parsedResults = safeParseJSON(results);
+
+        // Filter out blacklisted songs (Negative Cache)
+        parsedResults = parsedResults.filter(item => {
+            const cached = songCache[item.videoId];
+            if (cached && cached.missingLyrics) {
+                // Double check expiry
+                const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+                if (Date.now() - cached.timestamp < thirtyDays) {
+                    return false; // Hide this result
+                }
+            }
+            return true;
+        });
+
+        res.json(parsedResults);
     } catch (err) {
         console.error("Search failed", err);
         res.status(500).json({ error: err.message });
@@ -121,7 +136,21 @@ app.get('/api/suggestions', async (req, res) => {
 
     try {
         const results = await runPythonHelper('suggestions.py', [query]);
-        res.json(safeParseJSON(results));
+        let parsedResults = safeParseJSON(results);
+
+        // Filter out blacklisted songs (Negative Cache)
+        parsedResults = parsedResults.filter(item => {
+            const cached = songCache[item.videoId];
+            if (cached && cached.missingLyrics) {
+                const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+                if (Date.now() - cached.timestamp < thirtyDays) {
+                    return false;
+                }
+            }
+            return true;
+        });
+
+        res.json(parsedResults);
     } catch (err) {
         console.error("Suggestions failed", err);
         res.status(500).json({ error: err.message });
@@ -159,8 +188,22 @@ app.post('/api/process-yt', async (req, res) => {
     // CHECK CACHE
     if (songCache[videoId]) {
         const cached = songCache[videoId];
+
+        // Check for Negative Cache (Missing Lyrics)
+        if (cached.missingLyrics) {
+            const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+            if (Date.now() - cached.timestamp < thirtyDays) {
+                console.log(`[CACHE] Blocked ${videoId} due to missing lyrics (Negative Cache)`);
+                return res.status(404).json({ error: 'Lyrics not available (Cached)' });
+            } else {
+                // Expired, allow retry
+                delete songCache[videoId];
+                saveCache();
+            }
+        }
+
         // Verify files still exist
-        const lrcExists = fs.existsSync(cached.lrcPath);
+        const lrcExists = cached.lrcPath && fs.existsSync(cached.lrcPath);
         const instExists = cached.instrumentalPath && fs.existsSync(path.join(uploadDir, path.basename(cached.instrumentalPath)));
 
         if (lrcExists && instExists) {
@@ -188,7 +231,16 @@ app.post('/api/process-yt', async (req, res) => {
         const dlResult = safeParseJSON(output);
 
         if (dlResult.error) {
-            return res.status(404).json({ error: dlResult.error }); // Song not available
+            // Negative Caching for Lyrics Failure
+            if (dlResult.error.includes("Lyrics not available")) {
+                console.log(`[NEGATIVE CACHE] Caching missing lyrics for ${videoId}`);
+                songCache[videoId] = {
+                    missingLyrics: true,
+                    timestamp: Date.now()
+                };
+                saveCache();
+            }
+            return res.status(404).json({ error: dlResult.error });
         }
 
         const { mp3_path, lrc_path } = dlResult;
@@ -236,6 +288,21 @@ app.post('/api/process-yt', async (req, res) => {
 
     } catch (err) {
         console.error('Processing Error:', err);
+
+        // Check for specific Python script errors (exit code 1)
+        if (err.logs && Array.isArray(err.logs)) {
+            const logContent = err.logs.join(' ');
+            if (logContent.includes("Lyrics not available")) {
+                console.log(`[NEGATIVE CACHE] Caching missing lyrics for ${videoId} (from Catch block)`);
+                songCache[videoId] = {
+                    missingLyrics: true,
+                    timestamp: Date.now()
+                };
+                saveCache();
+                return res.status(404).json({ error: 'Lyrics not available' });
+            }
+        }
+
         res.status(500).json({ error: 'Processing failed', details: err.message || err });
     }
 });

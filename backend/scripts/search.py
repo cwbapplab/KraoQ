@@ -10,8 +10,15 @@ def check_yt_lyrics(yt_instance, video_id):
     """
     try:
         watch = yt_instance.get_watch_playlist(videoId=video_id)
-        if watch and watch.get('lyrics'):
-            return True
+        lyrics_id = watch.get('lyrics')
+        if lyrics_id:
+             try:
+                 lyrics_data = yt_instance.get_lyrics(lyrics_id)
+                 if lyrics_data and lyrics_data.get('lyrics'):
+                     return True
+             except:
+                 pass
+        return False
     except:
         return False
     return False
@@ -56,12 +63,12 @@ def search_music(query):
         # Ideally share one, but let's init inside or pass it. 
         # Using one instance might be thread-unsafe depending on internals, lets make it simple.
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             # We pass the video_id. check_yt_lyrics will use a closure or new instance?
             # Passing 'yt' might be okay if session is threadsafe. `requests.Session` is usually thread-safe.
             future_to_item = {
                 executor.submit(check_yt_lyrics, yt, item['videoId']): item 
-                for item in items_to_process[:10]
+                for item in items_to_process
             }
             
             for future in concurrent.futures.as_completed(future_to_item):
