@@ -507,7 +507,7 @@ function App() {
 
             {/* Global Transition Overlay Backdrop */}
             {isTransitioning && (
-                <div className="fixed inset-0 bg-black/70 backdrop-blur-3xl z-[150] animate-in fade-in duration-1000" />
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-2xl z-[150] animate-in fade-in duration-700" />
             )}
 
             {/* HERO TRANSITION ELEMENT */}
@@ -525,17 +525,17 @@ function App() {
                         transform: 'none'
                     }}
                     className={`
-                        fixed z-[1000] transition-all duration-1000 ease-out flex items-center flex-nowrap
+                        fixed z-[1000] transition-[transform,opacity,filter,top,left,width,height] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)] flex items-center flex-nowrap will-change-[transform,top,left,width,height,opacity]
                         ${transitionStage === 'hero' || transitionStage === 'fadeout'
                             ? 'p-6 gap-6 rounded-full w-auto max-w-[600px] min-w-[350px] pr-12 bg-slate-900/90 backdrop-blur-md border border-primary/50 shadow-[0_0_80px_rgba(99,102,241,0.4)] ring-2 ring-primary/30'
                             : `gap-4 bg-card-bg border border-white/10 shadow-xl overflow-hidden ${selectedSource === 'recent' ? 'p-3 rounded-full' : (selectedSource === 'dropdown' ? 'p-3 rounded-xl' : 'p-4 rounded-2xl')}`}
-                        ${transitionStage === 'fadeout' ? 'opacity-0 blur-3xl scale-110' : 'opacity-100'}
+                        ${transitionStage === 'fadeout' ? 'opacity-0 blur-2xl scale-110' : 'opacity-100'}
                     `}
                 >
                     <img
                         src={currentSong.thumbnail}
                         className={`
-                            shrink-0 transition-all duration-1000
+                            shrink-0 transition-[transform,width,height,border-radius] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)] will-change-[transform,width,height]
                             ${transitionStage === 'hero' || transitionStage === 'fadeout'
                                 ? 'w-20 h-20 rounded-full shadow-lg'
                                 : (selectedSource === 'recent' ? 'w-10 h-10 rounded-full' : (selectedSource === 'dropdown' ? 'w-12 h-12 rounded' : 'w-24 h-24 rounded-xl'))}
@@ -544,7 +544,7 @@ function App() {
                     />
                     <div className="flex-1 min-w-0">
                         <h2 className={`
-                            font-black text-white transition-all duration-1000
+                            font-black text-white transition-[font-size,opacity] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)]
                             ${transitionStage === 'hero' || transitionStage === 'fadeout'
                                 ? 'text-2xl whitespace-nowrap truncate'
                                 : (selectedSource === 'recent' || selectedSource === 'dropdown' ? 'text-sm font-medium truncat' : 'text-lg font-bold truncate')}
@@ -553,7 +553,7 @@ function App() {
                         </h2>
                         {currentSong.artist && (
                             <p className={`
-                                text-text-muted transition-all duration-1000
+                                text-text-muted transition-[font-size,opacity] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)]
                                 ${transitionStage === 'hero' || transitionStage === 'fadeout'
                                     ? 'text-lg mt-0.5'
                                     : 'text-xs truncate'}
@@ -614,9 +614,9 @@ function App() {
                 <div
                     ref={headerRef}
                     style={transitionStage === 'hero' || transitionStage === 'fadeout' ? {
-                        top: '50%',
+                        top: '15vh',
                         left: '50%',
-                        transform: `translate(-50%, -185%) scale(${transitionStage === 'fadeout' ? 2.0 : 1.8})`
+                        transform: `translateX(-50%) scale(${transitionStage === 'fadeout' ? 1.6 : 1.4})`
                     } : transitionStage === 'start' ? {
                         top: headerRect?.top,
                         left: headerRect?.left,
@@ -624,7 +624,7 @@ function App() {
                         transform: 'none'
                     } : {}}
                     className={`
-                        text-center mb-12 transition-all duration-1000 ease-out
+                        text-center mb-12 transition-[top,left,transform,opacity,filter] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)] will-change-[transform,top,opacity]
                         ${isTransitioning
                             ? 'fixed z-[800] blur-none pointer-events-none'
                             : 'animate-in fade-in'}
@@ -810,7 +810,7 @@ function App() {
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="bg-white/10 p-3 rounded-full group-hover:bg-primary group-hover:text-white transition-all">
+                                    <div className="bg-white/10 p-3 rounded-full group-hover:bg-primary group-hover:text-white transition-colors">
                                         <Mic2 size={20} />
                                     </div>
                                 </div>
@@ -822,8 +822,8 @@ function App() {
 
             {/* RECENT SONGS */}
             {!karaokeMode && recentSongs.length > 0 && searchResults.length === 0 && (
-                <div className={`mt-16 w-full relative recent-list-container transition-all duration-1000 ${isTransitioning ? 'animate-none' : 'opacity-100 scale-100 animate-in fade-in duration-700 delay-300'}`}>
-                    <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2 transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
+                <div className={`mt-16 w-full relative recent-list-container transition-[transform,opacity] duration-1000 ${isTransitioning ? 'animate-none' : 'opacity-100 scale-100 animate-in fade-in duration-700 delay-300'}`}>
+                    <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2 transition-opacity duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
 
                     <div
                         className={`flex overflow-x-auto gap-4 py-8 px-8 stylized-scrollbar scroll-smooth transition-all duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}
@@ -837,7 +837,7 @@ function App() {
                                 key={`${song.videoId}-${i}`}
                                 onClick={(e) => processSong(song, song.thumbnail, e)}
                                 className={`
-                                    inline-flex p-3 pr-6 rounded-full items-center gap-3 cursor-pointer transition-all duration-700 shrink-0
+                                    inline-flex p-3 pr-6 rounded-full items-center gap-3 cursor-pointer transition-[transform,opacity,border-color,background-color] duration-700 shrink-0
                                     ${isTransitioning ? 'blur-2xl opacity-0 grayscale scale-50 pointer-events-none' : 'bg-card-bg/50 border border-white/5 hover:border-white/20 hover:bg-white/10 active:scale-95 group'}
                                 `}
                             >
@@ -852,7 +852,7 @@ function App() {
                                         e.stopPropagation();
                                         removeFromRecent(song.videoId);
                                     }}
-                                    className="ml-2 p-1.5 rounded-full hover:bg-white/20 text-text-muted hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+                                    className="ml-2 p-1.5 rounded-full hover:bg-white/20 text-text-muted hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
                                 >
                                     <X size={12} />
                                 </button>
@@ -874,14 +874,14 @@ function App() {
                     onDoubleClick={toggleFullscreen}
                 >
                     <div className={`
-                         relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-all duration-300
+                         relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-[margin,opacity] duration-300
                          py-8
                          ${showControls ? 'mb-4' : 'mb-0'}
                      `}>
                         <AuroraBackground audioRef={audioRef} />
                         {/* Play/Pause Overlay */}
                         <div className={`
-                            absolute inset-0 z-20 flex items-center justify-center transition-all duration-300
+                            absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-300
                             ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
                         `}>
                             <div
@@ -893,7 +893,7 @@ function App() {
                                         audioRef.current.pause();
                                     }
                                 }}
-                                className="w-24 h-24 flex items-center justify-center bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white shadow-2xl transform active:scale-90 transition-all cursor-pointer hover:bg-white/20"
+                                className="w-24 h-24 flex items-center justify-center bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white shadow-2xl transform active:scale-90 transition-[background-color,transform] cursor-pointer hover:bg-white/20"
                             >
                                 {isPlaying ? <Pause size={48} fill="currentColor" /> : <Play size={48} fill="currentColor" className="ml-2" />}
                             </div>
@@ -908,7 +908,7 @@ function App() {
                             }}
                         >
                             <div
-                                className="absolute inset-x-12 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]"
+                                className="absolute inset-x-12 transition-transform duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] will-change-transform"
                                 style={{
                                     transform: `translateY(${- (activeLineIndex + 1) * 220}px)`,
                                     top: '50%',
@@ -934,7 +934,7 @@ function App() {
                                             className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500' : 'text-white'}`}
                                             style={{
                                                 fontSize: 'clamp(1.2rem, 6vw, 3.5rem)',
-                                                textShadow: idx === activeLineIndex ? '0 0 30px rgba(99,102,241,0.5)' : 'none',
+                                                textShadow: idx === activeLineIndex ? '0 0 15px rgba(99,102,241,0.5)' : 'none',
                                                 WebkitTextFillColor: idx === activeLineIndex ? 'transparent' : 'white'
                                             }}
                                         >

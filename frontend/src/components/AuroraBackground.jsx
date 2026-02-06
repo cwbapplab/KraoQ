@@ -80,13 +80,8 @@ const AuroraBackground = ({ audioRef }) => {
                     blob.style.transform = `translate(${x}%, ${y}%) scale(${scale}) rotate(${angle * 0.1}deg)`;
                 }
 
-                // Calculate opacity and blur to maintain text as the star
-                // High frequency/volume increases opacity but we cap it to keep it as background
-                const opacity = 0.15 + intensity * 0.35;
-                const blur = 60 + intensity * 40;
-
+                const opacity = 0.2 + intensity * 0.3;
                 containerRef.current.style.opacity = opacity;
-                containerRef.current.style.filter = `blur(${blur}px)`;
             }
             animationRef.current = requestAnimationFrame(animate);
         };
@@ -103,8 +98,8 @@ const AuroraBackground = ({ audioRef }) => {
     return (
         <div
             ref={containerRef}
-            className="absolute inset-0 overflow-hidden pointer-events-none transition-all duration-300 mix-blend-normal"
-            style={{ zIndex: 0 }}
+            className="absolute inset-0 overflow-hidden pointer-events-none transition-opacity duration-700 mix-blend-normal"
+            style={{ zIndex: 0, filter: 'blur(80px)', opacity: 0.3 }}
         >
             {colors.map((color, i) => (
                 <div
