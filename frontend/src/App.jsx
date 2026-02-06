@@ -537,7 +537,7 @@ function App() {
                 >
                     <div className={`
                          relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-all duration-300
-                         px-12 py-8
+                         py-8
                          ${showControls ? 'mb-4' : 'mb-0'} 
                      `}>
                         <AuroraBackground audioRef={audioRef} />
@@ -569,16 +569,19 @@ function App() {
                             }}
                         >
                             <div
-                                className="absolute left-0 w-full transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]"
+                                className="absolute inset-x-12 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]"
                                 style={{
-                                    transform: `translateY(${- (activeLineIndex + 1) * 150}px)`,
+                                    transform: `translateY(${- (activeLineIndex + 1) * 220}px)`,
                                     top: '50%',
-                                    marginTop: '-75px'
+                                    marginTop: '-110px'
                                 }}
                             >
                                 {/* Initial / Intro Line */}
-                                <div className={`flex items-center justify-center transition-all duration-500 h-[150px] ${activeLineIndex === -1 ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}>
-                                    <span className={`${activeLineIndex === -1 ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500 drop-shadow-[0_0_20px_rgba(99,102,241,0.4)]' : 'text-white'} font-bold text-6xl leading-tight`}>
+                                <div className={`flex items-center justify-center transition-all duration-500 h-[220px] ${activeLineIndex === -1 ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}>
+                                    <span
+                                        className={`${activeLineIndex === -1 ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500 drop-shadow-[0_0_20px_rgba(99,102,241,0.4)]' : 'text-white'} font-bold leading-tight`}
+                                        style={{ fontSize: 'clamp(1.2rem, 6vw, 3.5rem)' }}
+                                    >
                                         {activeLineIndex === -1 ? displayCurrText : ""}
                                     </span>
                                 </div>
@@ -586,12 +589,12 @@ function App() {
                                 {lyricsData.map((line, idx) => (
                                     <div
                                         key={idx}
-                                        className={`flex items-center justify-center transition-all duration-500 h-[150px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
+                                        className={`flex items-center justify-center transition-all duration-500 h-[220px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
                                     >
                                         <span
                                             className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500' : 'text-white'}`}
                                             style={{
-                                                fontSize: 'clamp(2rem, 8vw, 4rem)',
+                                                fontSize: 'clamp(1.2rem, 6vw, 3.5rem)',
                                                 textShadow: idx === activeLineIndex ? '0 0 30px rgba(99,102,241,0.5)' : 'none',
                                                 WebkitTextFillColor: idx === activeLineIndex ? 'transparent' : 'white'
                                             }}
@@ -606,7 +609,7 @@ function App() {
 
                     {/* Controls Container - Transition opacity/height */}
                     <div
-                        className={`w-full transition-all duration-300 px-8 py-3 grid grid-cols-[1fr,auto] gap-x-0 items-center ${(!isFullscreen || showControls) ? 'max-h-32 opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
+                        className={`w-full transition-all duration-300 px-4 sm:px-20 py-3 grid grid-cols-[1fr,auto] gap-x-0 items-center ${(!isFullscreen || showControls) ? 'max-h-32 opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
                         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking controls
                     >
                         <audio
