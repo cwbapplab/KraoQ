@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause } from 'lucide-react';
+import AuroraBackground from './components/AuroraBackground';
 
 const API_URL = "http://localhost:3001";
 
@@ -324,9 +325,9 @@ function App() {
                     <div className={`
                  relative bg-black rounded-3xl overflow-hidden flex flex-col items-center justify-center transition-all duration-300
                  ${isFullscreen ? 'flex-1 w-full h-full px-24 py-12' : 'h-[400px] p-8'}
-                 before:content-[''] before:absolute before:inset-0 before:bg-[radial-gradient(circle,var(--primary)_0%,transparent_60%)] before:opacity-10 before:animate-pulse
                  ${(!isFullscreen || showControls) ? 'mb-8' : 'mb-0'} 
              `}>
+                        <AuroraBackground audioRef={audioRef} />
                         {/* Play/Pause Overlay */}
                         <div className={`
                             absolute inset-0 z-20 flex items-center justify-center transition-all duration-300
@@ -347,13 +348,13 @@ function App() {
                         </div>
 
                         <div className={`text-center w-full z-10 flex flex-col justify-evenly h-full transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
-                            <div className={`font-bold text-white/30 transition-all ${isFullscreen ? 'text-5xl' : 'text-2xl'}`}>
+                            <div className={`font-bold text-white/60 transition-all ${isFullscreen ? 'text-5xl' : 'text-2xl'}`}>
                                 {prevLine ? prevLine.text : ""}
                             </div>
                             <div className={`font-bold text-white transition-all scale-110 drop-shadow-[0_0_20px_rgba(99,102,241,0.8)] ${isFullscreen ? 'text-7xl leading-tight' : 'text-4xl'}`}>
                                 {displayCurrText}
                             </div>
-                            <div className={`font-bold text-white/60 transition-all ${isFullscreen ? 'text-6xl' : 'text-3xl'}`}>
+                            <div className={`font-bold text-white/80 transition-all ${isFullscreen ? 'text-6xl' : 'text-3xl'}`}>
                                 {displayNextText}
                             </div>
                         </div>
@@ -367,6 +368,7 @@ function App() {
                         <audio
                             ref={audioRef}
                             src={currentSong.instrumentalUrl}
+                            crossOrigin="anonymous"
                             controls
                             autoPlay
                             className="w-full h-12 rounded-xl invert hue-rotate-180 brightness-150"
