@@ -7,7 +7,7 @@ import ConfirmationModal from './components/ConfirmationModal';
 import { useAuth } from './hooks/useAuth';
 
 const API_URL = "http://localhost:3001";
-
+const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2Ljk2IDM2Ljk2IiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgoNPGcgaWQ9IlNWR1JlcG9fYmdDYXJyaWVyIiBzdHJva2Utd2lkdGg9IjAiPgoNPHJlY3QgeD0iLTYuNDgiIHk9Ii02LjQ4IiB3aWR0aD0iMzYuOTYiIGhlaWdodD0iMzYuOTYiIHJ4PSIyLjk1NjgiIGZpbGw9IiMyOTI5MjkiIHN0cm9rZXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjc1IDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjc1IDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
 function App() {
     const [query, setQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
@@ -760,7 +760,10 @@ function App() {
                                                                     setShowSearchDropdown(false);
                                                                 }}
                                                             >
-                                                                <img src={s.currentSong.thumbnail} className="w-12 h-12 rounded object-cover" />
+                                                                src={s.currentSong.thumbnail}
+                                                                className="w-12 h-12 rounded object-cover"
+                                                                onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
+                                                                />
                                                                 <div className="flex-1 truncate">
                                                                     <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.currentSong.title}</p>
                                                                     <p className="text-xs text-text-muted truncate">{s.currentSong.artist}</p>
@@ -785,11 +788,28 @@ function App() {
                                                             setShowSearchDropdown(false);
                                                         }}
                                                     >
-                                                        <img src={s.thumbnail} className="w-12 h-12 rounded object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                                        <img
+                                                            src={s.thumbnail}
+                                                            className="w-12 h-12 rounded object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                                                            onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
+                                                        />
                                                         <div className="flex-1 truncate">
-                                                            <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.title}</p>
+                                                            <div className="flex items-center gap-2">
+                                                                <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.title}</p>
+                                                                {s.recommended && (
+                                                                    <span className="bg-accent/20 text-accent text-[8px] font-black px-1.5 py-0.5 rounded-md border border-accent/20 uppercase tracking-tighter shrink-0">
+                                                                        Recommended
+                                                                    </span>
+                                                                )}
+                                                                {s.isCached && !s.recommended && (
+                                                                    <span className="bg-primary/20 text-primary-hover text-[8px] font-black px-1.5 py-0.5 rounded-md border border-primary/20 uppercase tracking-tighter shrink-0">
+                                                                        In Library
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                             <p className="text-xs text-text-muted truncate">{s.artists}</p>
                                                         </div>
+                                                        {(s.isCached || s.recommended) && <Mic2 size={12} className="text-primary-hover/50 group-hover:text-primary transition-colors" />}
                                                     </div>
                                                 ))}
                                             </div>
@@ -871,7 +891,12 @@ function App() {
                                         ${video.isCached && !isTransitioning ? 'border-primary/40 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : ''}
                                     `}
                                 >
-                                    <img src={video.thumbnail} alt={video.title} className="w-24 h-24 object-cover rounded-xl shadow-lg group-hover:shadow-primary/20 transition-all" />
+                                    <img
+                                        src={video.thumbnail}
+                                        alt={video.title}
+                                        className="w-24 h-24 object-cover rounded-xl shadow-lg group-hover:shadow-primary/20 transition-all"
+                                        onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
+                                    />
                                     <div className="flex-1 min-w-0">
                                         <h3 className="font-bold text-lg truncate text-white group-hover:text-primary transition-colors">{video.title}</h3>
                                         <div className="flex items-center gap-2 flex-wrap">
@@ -922,7 +947,12 @@ function App() {
                                     ${isTransitioning ? 'blur-2xl opacity-0 grayscale scale-50 pointer-events-none' : 'bg-card-bg/50 border border-white/5 hover:border-white/20 hover:bg-white/10 active:scale-95 group'}
                                 `}
                             >
-                                <img src={song.thumbnail} alt={song.title} className="w-10 h-10 rounded-full object-cover border border-white/10" />
+                                <img
+                                    src={song.thumbnail}
+                                    alt={song.title}
+                                    className="w-10 h-10 rounded-full object-cover border border-white/10"
+                                    onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
+                                />
                                 <div className="flex flex-col">
                                     <span className="text-sm font-medium text-white/80 group-hover:text-white max-w-[150px] truncate">{song.title}</span>
                                     {song.artist && <span className="text-[10px] text-white/50 group-hover:text-white/70 max-w-[150px] truncate">{song.artist}</span>}

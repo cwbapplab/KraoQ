@@ -12,6 +12,7 @@ const axios = require('axios');
 
 const mongoose = require('mongoose');
 const User = require('./models/User');
+const CachedSong = require('./models/CachedSong');
 
 // Connect to MongoDB
 const mongoUser = process.env.MONGO_USERNAME || 'root';
@@ -228,18 +229,18 @@ app.get('/api/search', isAuthenticated, async (req, res) => {
         const results = await runPythonHelper('search.py', [query]);
         let parsedResults = safeParseJSON(results);
 
-        // Filter out blacklisted songs (Negative Cache)
-        parsedResults = parsedResults.filter(item => {
-            const cached = songCache[item.videoId];
-            if (cached && cached.missingLyrics) {
-                // Double check expiry
-                const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-                if (Date.now() - cached.timestamp < thirtyDays) {
-                    return false; // Hide this result
-                }
-            }
-            return true;
-        });
+        // Fetch negative cache (blocked songs) from MongoDB
+        const videoIds = parsedResults.map(item => item.videoId);
+        const blockedSongs = await CachedSong.find({
+            videoId: { $in: videoIds },
+            missingLyrics: true,
+            timestamp: { $gt: Date.now() - (30 * 24 * 60 * 60 * 1000) }
+        }).select('videoId');
+
+        const blockedIdSet = new Set(blockedSongs.map(s => s.videoId));
+
+        // Filter out blacklisted songs
+        parsedResults = parsedResults.filter(item => !blockedIdSet.has(item.videoId));
 
         res.json(parsedResults);
     } catch (err) {
@@ -256,17 +257,36 @@ app.get('/api/suggestions', isAuthenticated, async (req, res) => {
         const results = await runPythonHelper('suggestions.py', [query]);
         let parsedResults = safeParseJSON(results);
 
-        // Filter out blacklisted songs (Negative Cache)
-        parsedResults = parsedResults.filter(item => {
-            const cached = songCache[item.videoId];
+        // Fetch cache status for these items to manage negative cache and recommendations
+        const videoIds = parsedResults.map(item => item.videoId);
+        const cachedSongs = await CachedSong.find({
+            videoId: { $in: videoIds }
+        }).select('videoId missingLyrics timestamp');
+
+        const cacheMap = new Map(cachedSongs.map(s => [s.videoId, s]));
+
+        // Process results: filter logic and tagging
+        parsedResults = parsedResults.reduce((acc, item) => {
+            const cached = cacheMap.get(item.videoId);
+
+            // Filter out negative cache (songs with missing lyrics within 30 days)
             if (cached && cached.missingLyrics) {
                 const thirtyDays = 30 * 24 * 60 * 60 * 1000;
                 if (Date.now() - cached.timestamp < thirtyDays) {
-                    return false;
+                    return acc;
                 }
             }
-            return true;
-        });
+
+            // Tag as recommended if it's successfully cached and has lyrics
+            if (cached && !cached.missingLyrics) {
+                item.recommended = true;
+                item.isCached = true;
+                item.hasLyrics = true;
+            }
+
+            acc.push(item);
+            return acc;
+        }, []);
 
         res.json(parsedResults);
     } catch (err) {
@@ -275,27 +295,38 @@ app.get('/api/suggestions', isAuthenticated, async (req, res) => {
     }
 });
 
-// CACHE SYSTEM
-const cachePath = path.join(__dirname, 'cache.json');
-let songCache = {};
+// CACHE SYSTEM (MongoDB based)
+async function migrateCacheToMongo() {
+    const cachePath = path.join(__dirname, 'cache.json');
+    if (fs.existsSync(cachePath)) {
+        try {
+            const songCache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+            console.log(`Migrating ${Object.keys(songCache).length} items from cache.json to MongoDB...`);
 
-// Load cache on start
-if (fs.existsSync(cachePath)) {
-    try {
-        songCache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
-        console.log(`Loaded ${Object.keys(songCache).length} items from cache.`);
-    } catch (e) {
-        console.error("Failed to load cache", e);
+            for (const videoId in songCache) {
+                const data = songCache[videoId];
+                await CachedSong.findOneAndUpdate(
+                    { videoId },
+                    {
+                        videoId,
+                        ...data,
+                        timestamp: data.timestamp || Date.now()
+                    },
+                    { upsert: true }
+                );
+            }
+
+            // Rename file instead of delete to be safe
+            fs.renameSync(cachePath, cachePath + '.bak');
+            console.log("Migration complete. cache.json renamed to cache.json.bak");
+        } catch (e) {
+            console.error("Migration failed:", e);
+        }
     }
 }
 
-function saveCache() {
-    try {
-        fs.writeFileSync(cachePath, JSON.stringify(songCache, null, 2));
-    } catch (e) {
-        console.error("Failed to save cache", e);
-    }
-}
+// Call migration after DB connection
+mongoose.connection.once('open', migrateCacheToMongo);
 
 // Helper to call external Audio Processor Service
 async function callAudioProcessorService(audioPath, outputDir) {
@@ -372,42 +403,44 @@ app.post('/api/process-yt', isAuthenticated, async (req, res) => {
     console.log(`Processing YouTube ID: ${videoId}`);
 
     // CHECK CACHE
-    if (songCache[videoId]) {
-        const cached = songCache[videoId];
-
-        // Check for Negative Cache (Missing Lyrics)
-        if (cached.missingLyrics) {
-            const thirtyDays = 30 * 24 * 60 * 60 * 1000;
-            if (Date.now() - cached.timestamp < thirtyDays) {
-                console.log(`[CACHE] Blocked ${videoId} due to missing lyrics (Negative Cache)`);
-                return res.status(404).json({ error: 'Lyrics not available (Cached)' });
+    try {
+        const cached = await CachedSong.findOne({ videoId });
+        if (cached) {
+            // Check for Negative Cache (Missing Lyrics)
+            if (cached.missingLyrics) {
+                const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+                if (Date.now() - cached.timestamp < thirtyDays) {
+                    console.log(`[CACHE] Blocked ${videoId} due to missing lyrics (Negative Cache)`);
+                    return res.status(404).json({ error: 'Lyrics not available (Cached)' });
+                } else {
+                    // Expired, allow retry by removing the negative cache
+                    await CachedSong.deleteOne({ videoId });
+                }
             } else {
-                // Expired, allow retry
-                delete songCache[videoId];
-                saveCache();
+                // Verify files still exist
+                const lrcExists = cached.lrcPath && fs.existsSync(cached.lrcPath);
+                const instExists = cached.instrumentalPath && fs.existsSync(path.join(uploadDir, path.basename(cached.instrumentalPath)));
+
+                if (lrcExists && instExists) {
+                    console.log(`[CACHE HIT] Returning cached data for ${videoId}`);
+                    const lrcContentRaw = fs.readFileSync(cached.lrcPath, 'utf8');
+                    const segments = parseLRC(lrcContentRaw);
+
+                    return res.json({
+                        message: 'Processing complete (Cached)',
+                        data: {
+                            segments: segments,
+                            lrc: lrcContentRaw,
+                            instrumentalUrl: `/uploads/${path.basename(cached.instrumentalPath)}`,
+                            title: cached.title,
+                            artist: cached.artist
+                        }
+                    });
+                }
             }
         }
-
-        // Verify files still exist
-        const lrcExists = cached.lrcPath && fs.existsSync(cached.lrcPath);
-        const instExists = cached.instrumentalPath && fs.existsSync(path.join(uploadDir, path.basename(cached.instrumentalPath)));
-
-        if (lrcExists && instExists) {
-            console.log(`[CACHE HIT] Returning cached data for ${videoId}`);
-            const lrcContentRaw = fs.readFileSync(cached.lrcPath, 'utf8');
-            const segments = parseLRC(lrcContentRaw);
-
-            return res.json({
-                message: 'Processing complete (Cached)',
-                data: {
-                    segments: segments,
-                    lrc: lrcContentRaw,
-                    instrumentalUrl: `/uploads/${path.basename(cached.instrumentalPath)}`,
-                    title: cached.title,
-                    artist: cached.artist
-                }
-            });
-        }
+    } catch (err) {
+        console.error("Cache lookup error:", err);
     }
 
     try {
@@ -420,11 +453,11 @@ app.post('/api/process-yt', isAuthenticated, async (req, res) => {
             // Negative Caching for Lyrics Failure
             if (dlResult.error.includes("Lyrics not available")) {
                 console.log(`[NEGATIVE CACHE] Caching missing lyrics for ${videoId}`);
-                songCache[videoId] = {
-                    missingLyrics: true,
-                    timestamp: Date.now()
-                };
-                saveCache();
+                await CachedSong.findOneAndUpdate(
+                    { videoId },
+                    { videoId, missingLyrics: true, timestamp: Date.now() },
+                    { upsert: true }
+                );
             }
             return res.status(404).json({ error: dlResult.error });
         }
@@ -451,14 +484,19 @@ app.post('/api/process-yt', isAuthenticated, async (req, res) => {
 
         // UPDATE CACHE
         if (instrumentalUrl) {
-            songCache[videoId] = {
-                title: dlResult.title,
-                artist: dlResult.artist,
-                lrcPath: lrc_path,
-                instrumentalPath: sepResult.instrumental, // full path on disk
-                timestamp: Date.now()
-            };
-            saveCache();
+            await CachedSong.findOneAndUpdate(
+                { videoId },
+                {
+                    videoId,
+                    title: dlResult.title,
+                    artist: dlResult.artist,
+                    lrcPath: lrc_path,
+                    instrumentalPath: sepResult.instrumental,
+                    timestamp: Date.now(),
+                    missingLyrics: false
+                },
+                { upsert: true }
+            );
         }
 
         res.json({
@@ -480,11 +518,11 @@ app.post('/api/process-yt', isAuthenticated, async (req, res) => {
             const logContent = err.logs.join(' ');
             if (logContent.includes("Lyrics not available")) {
                 console.log(`[NEGATIVE CACHE] Caching missing lyrics for ${videoId} (from Catch block)`);
-                songCache[videoId] = {
-                    missingLyrics: true,
-                    timestamp: Date.now()
-                };
-                saveCache();
+                await CachedSong.findOneAndUpdate(
+                    { videoId },
+                    { videoId, missingLyrics: true, timestamp: Date.now() },
+                    { upsert: true }
+                );
                 return res.status(404).json({ error: 'Lyrics not available' });
             }
         }
