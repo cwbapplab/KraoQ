@@ -255,7 +255,7 @@ function App() {
 
         container.addEventListener('wheel', handleWheel, { passive: false });
         return () => container.removeEventListener('wheel', handleWheel);
-    }, [recentSongs.length]);
+    }, [recentSongs.length, karaokeMode]);
 
     const processSong = async (videoIdInput, thumbnail = null, e = null) => {
         // Handle variations (old history or direct pass)
