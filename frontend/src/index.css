@@ -63,3 +63,12 @@ body::before {
 .loader {
     @apply inline-block w-7 h-7 border-[3px] border-white/20 border-t-white rounded-full animate-spin;
 }
+
+/* Hide native audio overflow and other browser-specific control clutter */
+audio::-webkit-media-controls-remote-playback-button {
+    display: none !important;
+}
+
+audio::-webkit-media-controls-download-button {
+    display: none !important;
+}

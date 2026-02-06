@@ -252,6 +252,16 @@ function App() {
         return () => document.removeEventListener('fullscreenchange', handleFsChange);
     }, []);
 
+    // Prevent body scroll when in Karaoke Mode
+    useEffect(() => {
+        if (karaokeMode) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = 'auto';
+        }
+        return () => { document.body.style.overflow = 'auto'; };
+    }, [karaokeMode]);
+
     // Helper Logic for Display
     const [showControls, setShowControls] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -312,173 +322,175 @@ function App() {
     }
 
     return (
-        <div className="w-full max-w-[900px] p-8 z-10 relative">
+        <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-8'}`}>
             {/* HEADER */}
-            <div className={`text-center mb-12 transition-all duration-500 transform ${karaokeMode ? '-translate-y-full opacity-0 absolute' : 'translate-y-0 opacity-100'}`}>
-                <h1 className="text-6xl font-bold mb-4 tracking-tight drop-shadow-lg bg-clip-text text-transparent bg-gradient-to-r from-primary via-accent to-primary animate-pulse">
-                    KraoQ
-                </h1>
-                <p className="text-xl text-text-muted font-light tracking-wide">
-                    Your favorite songs with a <span className="text-white font-medium">Professional Karaoke Experience</span>
-                </p>
-            </div>
+            {!karaokeMode && (
+                <div className="text-center mb-12 animate-in fade-in duration-500">
+                    <h1 className="text-6xl font-bold mb-4 tracking-tight drop-shadow-lg bg-clip-text text-transparent bg-gradient-to-r from-primary via-accent to-primary animate-pulse">
+                        KraoQ
+                    </h1>
+                    <p className="text-xl text-text-muted font-light tracking-wide">
+                        Your favorite songs with a <span className="text-white font-medium">Professional Karaoke Experience</span>
+                    </p>
+                </div>
+            )}
 
             {/* SEARCH SECTION */}
-            <div className={`transition-all duration-500 delay-100 ${karaokeMode ? 'opacity-0 translate-y-10 pointer-events-none absolute' : 'opacity-100 translate-y-0'} ${showSearchDropdown ? 'z-[60]' : 'z-20'} relative`}>
-                <div className="bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all">
-                    {/* Search Input */}
-                    <div className="relative z-10">
-                        <div className="relative flex items-center">
-                            <Search className="absolute left-6 text-text-muted w-6 h-6 group-focus-within:text-primary transition-colors" />
-                            <input
-                                type="text"
-                                className="w-full bg-black/40 border border-white/5 text-white pl-16 pr-6 py-5 rounded-2xl text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50"
-                                placeholder="Paste YouTube link or search song..."
-                                value={query}
-                                onFocus={() => setShowSearchDropdown(true)}
-                                onChange={(e) => setQuery(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && searchMusic()}
-                            />
+            {!karaokeMode && (
+                <div className={`transition-all duration-300 ${showSearchDropdown ? 'z-[60]' : 'z-20'} relative animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150`}>
+                    <div className="bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all">
+                        {/* Search Input */}
+                        <div className="relative z-10">
+                            <div className="relative flex items-center">
+                                <Search className="absolute left-6 text-text-muted w-6 h-6 group-focus-within:text-primary transition-colors" />
+                                <input
+                                    type="text"
+                                    className="w-full bg-black/40 border border-white/5 text-white pl-16 pr-6 py-5 rounded-2xl text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50"
+                                    placeholder="Paste YouTube link or search song..."
+                                    value={query}
+                                    onFocus={() => setShowSearchDropdown(true)}
+                                    onChange={(e) => setQuery(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && searchMusic()}
+                                />
 
-                            {/* SEARCH DROPDOWN */}
-                            {showSearchDropdown && (query || searchHistory.length > 0) && (
-                                <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full bg-card-bg/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                    {/* Cache Matches Section */}
-                                    {query && Object.values(songCache).filter(s =>
-                                        s.currentSong.title.toLowerCase().includes(query.toLowerCase()) ||
-                                        s.currentSong.artist.toLowerCase().includes(query.toLowerCase())
-                                    ).length > 0 && (
-                                            <div className="p-2 border-b border-white/5">
-                                                <p className="text-[10px] font-bold text-accent uppercase tracking-widest px-3 mb-2">In Your Library</p>
-                                                {Object.values(songCache)
-                                                    .filter(s => s.currentSong.title.toLowerCase().includes(query.toLowerCase()) || s.currentSong.artist.toLowerCase().includes(query.toLowerCase()))
-                                                    .slice(0, 3)
-                                                    .map(s => (
+                                {/* SEARCH DROPDOWN */}
+                                {showSearchDropdown && (query || searchHistory.length > 0) && (
+                                    <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full bg-card-bg/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                        {/* Cache Matches Section */}
+                                        {query && Object.values(songCache).filter(s =>
+                                            s.currentSong.title.toLowerCase().includes(query.toLowerCase()) ||
+                                            s.currentSong.artist.toLowerCase().includes(query.toLowerCase())
+                                        ).length > 0 && (
+                                                <div className="p-2 border-b border-white/5">
+                                                    <p className="text-[10px] font-bold text-accent uppercase tracking-widest px-3 mb-2">In Your Library</p>
+                                                    {Object.values(songCache)
+                                                        .filter(s => s.currentSong.title.toLowerCase().includes(query.toLowerCase()) || s.currentSong.artist.toLowerCase().includes(query.toLowerCase()))
+                                                        .slice(0, 3)
+                                                        .map(s => (
+                                                            <div
+                                                                key={s.currentSong.videoId}
+                                                                className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group"
+                                                                onClick={() => {
+                                                                    processSong(s.currentSong.videoId, s.currentSong.thumbnail);
+                                                                    setShowSearchDropdown(false);
+                                                                }}
+                                                            >
+                                                                <img src={s.currentSong.thumbnail} className="w-8 h-8 rounded object-cover" />
+                                                                <div className="flex-1 truncate">
+                                                                    <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.currentSong.title}</p>
+                                                                    <p className="text-xs text-text-muted truncate">{s.currentSong.artist}</p>
+                                                                </div>
+                                                                <Mic2 size={14} className="text-accent" />
+                                                            </div>
+                                                        ))
+                                                    }
+                                                </div>
+                                            )}
+
+                                        {/* Recent Searches */}
+                                        {searchHistory.length > 0 && (
+                                            <div className="p-2">
+                                                <div className="flex justify-between items-center px-3 mb-1">
+                                                    <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Recent Searches</p>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSearchHistory([]);
+                                                            localStorage.removeItem('search_history');
+                                                        }}
+                                                        className="text-[10px] text-text-muted hover:text-white transition-colors"
+                                                    >
+                                                        Clear
+                                                    </button>
+                                                </div>
+                                                {searchHistory
+                                                    .filter(h => !query || h.toLowerCase().includes(query.toLowerCase()))
+                                                    .map((term, i) => (
                                                         <div
-                                                            key={s.currentSong.videoId}
-                                                            className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group"
+                                                            key={i}
+                                                            className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer text-sm text-white/70 hover:text-white group"
                                                             onClick={() => {
-                                                                processSong(s.currentSong.videoId, s.currentSong.thumbnail);
-                                                                setShowSearchDropdown(false);
+                                                                setQuery(term);
+                                                                setTimeout(() => searchMusic(), 0);
                                                             }}
                                                         >
-                                                            <img src={s.currentSong.thumbnail} className="w-8 h-8 rounded object-cover" />
-                                                            <div className="flex-1 truncate">
-                                                                <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.currentSong.title}</p>
-                                                                <p className="text-xs text-text-muted truncate">{s.currentSong.artist}</p>
-                                                            </div>
-                                                            <Mic2 size={14} className="text-accent" />
+                                                            <Search size={14} className="text-text-muted group-hover:text-primary" />
+                                                            {term}
                                                         </div>
                                                     ))
                                                 }
                                             </div>
                                         )}
+                                    </div>
+                                )}
 
-                                    {/* Recent Searches */}
-                                    {searchHistory.length > 0 && (
-                                        <div className="p-2">
-                                            <div className="flex justify-between items-center px-3 mb-1">
-                                                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Recent Searches</p>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setSearchHistory([]);
-                                                        localStorage.removeItem('search_history');
-                                                    }}
-                                                    className="text-[10px] text-text-muted hover:text-white transition-colors"
-                                                >
-                                                    Clear
-                                                </button>
-                                            </div>
-                                            {searchHistory
-                                                .filter(h => !query || h.toLowerCase().includes(query.toLowerCase()))
-                                                .map((term, i) => (
-                                                    <div
-                                                        key={i}
-                                                        className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer text-sm text-white/70 hover:text-white group"
-                                                        onClick={() => {
-                                                            setQuery(term);
-                                                            // We set timeout to allow setQuery to propagate or just call search
-                                                            setTimeout(() => searchMusic(), 0);
-                                                        }}
-                                                    >
-                                                        <Search size={14} className="text-text-muted group-hover:text-primary" />
-                                                        {term}
-                                                    </div>
-                                                ))
-                                            }
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {/* Close dropdown on click outside logic (global handler) */}
-                            {showSearchDropdown && (
-                                <div
-                                    className="fixed inset-0 z-40"
-                                    onClick={() => setShowSearchDropdown(false)}
-                                />
-                            )}
-                            <button
-                                onClick={searchMusic}
-                                disabled={isSearching}
-                                className="absolute right-3 bg-primary hover:bg-primary-hover text-white px-8 py-3 rounded-xl font-medium transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20"
-                            >
-                                {isSearching ? <span className="loader scale-50"></span> : "Go"}
-                            </button>
+                                {showSearchDropdown && (
+                                    <div
+                                        className="fixed inset-0 z-40"
+                                        onClick={() => setShowSearchDropdown(false)}
+                                    />
+                                )}
+                                <button
+                                    onClick={searchMusic}
+                                    disabled={isSearching}
+                                    className="absolute right-3 bg-primary hover:bg-primary-hover text-white px-8 py-3 rounded-xl font-medium transition-all transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20"
+                                >
+                                    {isSearching ? <span className="loader scale-50"></span> : "Go"}
+                                </button>
+                            </div>
                         </div>
+
+                        {/* Status Message */}
+                        {status && (
+                            <div className="mt-6 text-center animate-pulse">
+                                <p className="text-accent font-medium bg-accent/10 inline-block px-4 py-1 rounded-full text-sm border border-accent/20">
+                                    {status}
+                                </p>
+                            </div>
+                        )}
                     </div>
 
-                    {/* Status Message */}
-                    {status && (
-                        <div className="mt-6 text-center animate-pulse">
-                            <p className="text-accent font-medium bg-accent/10 inline-block px-4 py-1 rounded-full text-sm border border-accent/20">
-                                {status}
-                            </p>
+                    {/* SEARCH RESULTS */}
+                    {searchResults.length > 0 && (
+                        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            {searchResults.map((video) => (
+                                <div
+                                    key={video.videoId}
+                                    onClick={() => processSong(video.videoId, video.thumbnail)}
+                                    className={`bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer hover:bg-white/5 hover:scale-[1.02] hover:border-primary/30 transition-all group ${video.isCached ? 'border-primary/40 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : 'border-white/5'}`}
+                                >
+                                    <img src={video.thumbnail} alt={video.title} className="w-24 h-24 object-cover rounded-xl shadow-lg group-hover:shadow-primary/20 transition-all" />
+                                    <div className="flex-1 min-w-0">
+                                        <h3 className="font-bold text-lg truncate text-white group-hover:text-primary transition-colors">{video.title}</h3>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <p className="text-sm text-text-muted truncate">{video.artists || video.channel}</p>
+                                            <div className="flex gap-1">
+                                                {video.isCached && (
+                                                    <span className="bg-primary/20 text-primary-hover text-[10px] font-bold px-2 py-0.5 rounded-full border border-primary/30 uppercase tracking-tighter">
+                                                        In Library
+                                                    </span>
+                                                )}
+                                                {video.hasLyrics && (
+                                                    <span className="bg-green-500/20 text-green-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-500/30 uppercase tracking-tighter">
+                                                        Lyrics
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="bg-white/10 p-3 rounded-full group-hover:bg-primary group-hover:text-white transition-all">
+                                        <Mic2 size={20} />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
-
-                {/* SEARCH RESULTS */}
-                {searchResults.length > 0 && (
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {searchResults.map((video) => (
-                            <div
-                                key={video.videoId}
-                                onClick={() => processSong(video.videoId, video.thumbnail)}
-                                className={`bg-card-bg border p-4 rounded-2xl flex items-center gap-4 cursor-pointer hover:bg-white/5 hover:scale-[1.02] hover:border-primary/30 transition-all group ${video.isCached ? 'border-primary/40 shadow-[0_0_15px_rgba(99,102,241,0.1)]' : 'border-white/5'}`}
-                            >
-                                <img src={video.thumbnail} alt={video.title} className="w-24 h-24 object-cover rounded-xl shadow-lg group-hover:shadow-primary/20 transition-all" />
-                                <div className="flex-1 min-w-0">
-                                    <h3 className="font-bold text-lg truncate text-white group-hover:text-primary transition-colors">{video.title}</h3>
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <p className="text-sm text-text-muted truncate">{video.artists || video.channel}</p>
-                                        <div className="flex gap-1">
-                                            {video.isCached && (
-                                                <span className="bg-primary/20 text-primary-hover text-[10px] font-bold px-2 py-0.5 rounded-full border border-primary/30 uppercase tracking-tighter">
-                                                    In Library
-                                                </span>
-                                            )}
-                                            {video.hasLyrics && (
-                                                <span className="bg-green-500/20 text-green-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-500/30 uppercase tracking-tighter">
-                                                    Lyrics
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="bg-white/10 p-3 rounded-full group-hover:bg-primary group-hover:text-white transition-all">
-                                    <Mic2 size={20} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
+            )}
 
             {/* RECENT SONGS */}
             {!karaokeMode && recentSongs.length > 0 && searchResults.length === 0 && (
-                <div className="mt-16 w-full overflow-hidden relative">
+                <div className="mt-16 w-full overflow-hidden relative animate-in fade-in duration-700 delay-300">
                     <h3 className="text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2">Recently Sung</h3>
 
                     {/* Shadow Gradients for Fade effect */}
@@ -511,21 +523,23 @@ function App() {
                     </div>
                 </div>
             )}
+
+            {/* KARAOKE PLAYER VIEW */}
             {karaokeMode && currentSong && (
                 <div
                     ref={karaokeContainerRef}
                     className={`
-                 bg-card-bg/90 rounded-3xl border border-white/10 shadow-2xl overflow-hidden relative
-                ${isFullscreen ? 'fixed inset-0 w-screen h-screen z-50 rounded-none m-0 p-8 flex flex-col justify-center bg-black' : 'p-12'}
-            `}
-                    onClick={() => setShowControls(prev => !prev)} // Toggle controls in all modes
+                        animate-in fade-in duration-500
+                        bg-black overflow-hidden fixed inset-0 z-50 flex flex-col items-center justify-center
+                    `}
+                    onClick={() => setShowControls(prev => !prev)}
                     onDoubleClick={toggleFullscreen}
                 >
                     <div className={`
-                 relative bg-black rounded-3xl overflow-hidden flex flex-col items-center justify-center transition-all duration-300
-                 ${isFullscreen ? 'flex-1 w-full h-full px-24 py-12' : 'h-[400px] p-8'}
-                 ${(!isFullscreen || showControls) ? 'mb-8' : 'mb-0'} 
-             `}>
+                         relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-all duration-300
+                         px-12 py-8
+                         ${showControls ? 'mb-4' : 'mb-0'} 
+                     `}>
                         <AuroraBackground audioRef={audioRef} />
                         {/* Play/Pause Overlay */}
                         <div className={`
@@ -549,7 +563,7 @@ function App() {
                         <div
                             className={`text-center w-full z-10 relative overflow-hidden transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}
                             style={{
-                                height: isFullscreen ? '900px' : '500px',
+                                height: '80vh',
                                 maskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)',
                                 WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)'
                             }}
@@ -557,15 +571,14 @@ function App() {
                             <div
                                 className="absolute left-0 w-full transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]"
                                 style={{
-                                    // Calculate center offset and shift by active index
-                                    transform: `translateY(${- (activeLineIndex + 1) * (isFullscreen ? 180 : 100)}px)`,
+                                    transform: `translateY(${- (activeLineIndex + 1) * 150}px)`,
                                     top: '50%',
-                                    marginTop: isFullscreen ? '-90px' : '-50px'
+                                    marginTop: '-75px'
                                 }}
                             >
                                 {/* Initial / Intro Line */}
-                                <div className={`flex items-center justify-center transition-all duration-500 ${isFullscreen ? 'h-[180px]' : 'h-[100px]'} ${activeLineIndex === -1 ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}>
-                                    <span className={`${activeLineIndex === -1 ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500 drop-shadow-[0_0_20px_rgba(99,102,241,0.4)]' : 'text-white'} font-bold ${isFullscreen ? 'text-7xl leading-tight' : 'text-4xl'}`}>
+                                <div className={`flex items-center justify-center transition-all duration-500 h-[150px] ${activeLineIndex === -1 ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}>
+                                    <span className={`${activeLineIndex === -1 ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500 drop-shadow-[0_0_20px_rgba(99,102,241,0.4)]' : 'text-white'} font-bold text-6xl leading-tight`}>
                                         {activeLineIndex === -1 ? displayCurrText : ""}
                                     </span>
                                 </div>
@@ -573,10 +586,16 @@ function App() {
                                 {lyricsData.map((line, idx) => (
                                     <div
                                         key={idx}
-                                        className={`flex items-center justify-center transition-all duration-500 ${isFullscreen ? 'h-[180px] px-12' : 'h-[100px] px-4'} ${idx === activeLineIndex ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}
+                                        className={`flex items-center justify-center transition-all duration-500 h-[150px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
                                     >
-                                        <span className={`font-bold transition-all text-center ${idx === activeLineIndex ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500' : 'text-white'} ${isFullscreen ? 'text-7xl leading-tight' : 'text-4xl'} ${idx === activeLineIndex ? 'drop-shadow-[0_0_20px_rgba(99,102,241,0.8)]' : ''}`}>
-                                            {/* Show dots if in interlude/intro and it's the next line */}
+                                        <span
+                                            className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500' : 'text-white'}`}
+                                            style={{
+                                                fontSize: 'clamp(2rem, 8vw, 4rem)',
+                                                textShadow: idx === activeLineIndex ? '0 0 30px rgba(99,102,241,0.5)' : 'none',
+                                                WebkitTextFillColor: idx === activeLineIndex ? 'transparent' : 'white'
+                                            }}
+                                        >
                                             {idx === activeLineIndex + 1 && displayNextText.includes('•') ? displayNextText : line.text}
                                         </span>
                                     </div>
@@ -587,7 +606,7 @@ function App() {
 
                     {/* Controls Container - Transition opacity/height */}
                     <div
-                        className={`w-full transition-all duration-300 overflow-hidden ${(!isFullscreen || showControls) ? 'max-h-40 opacity-100' : 'max-h-0 opacity-0'}`}
+                        className={`w-full transition-all duration-300 px-8 py-3 grid grid-cols-[1fr,auto] gap-x-0 items-center ${(!isFullscreen || showControls) ? 'max-h-32 opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
                         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking controls
                     >
                         <audio
@@ -595,18 +614,19 @@ function App() {
                             src={currentSong.instrumentalUrl}
                             crossOrigin="anonymous"
                             controls
+                            controlsList="nodownload noplaybackrate"
                             autoPlay
-                            className="w-full h-12 rounded-xl invert hue-rotate-180 brightness-150"
+                            className="w-full h-10 rounded-xl invert hue-rotate-180 brightness-150 custom-audio-controls"
                         />
-                        <div className="mt-4 flex justify-between items-center px-2">
-                            <div className="text-text-muted text-sm">Mode: <span className="text-accent font-bold">Instrumental</span></div>
-                            <button
-                                onClick={toggleFullscreen}
-                                className="flex items-center gap-2 bg-white/10 border border-white/20 text-white px-4 py-2 rounded-lg text-sm hover:bg-white/20 transition-all"
-                            >
-                                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                                {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-                            </button>
+                        <button
+                            onClick={toggleFullscreen}
+                            className="h-10 flex items-center pr-6 text-white/50 hover:text-white transform active:scale-90 transition-all cursor-pointer"
+                            title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                        >
+                            {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                        </button>
+                        <div className="mt-1 text-text-muted text-[10px] uppercase tracking-widest font-bold px-2 col-span-2 opacity-50">
+                            Mode: <span className="text-accent">Instrumental</span>
                         </div>
                     </div>
 
