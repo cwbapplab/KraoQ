@@ -3,6 +3,7 @@ import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, 
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
 import AuthModal from './components/AuthModal';
+import ConfirmationModal from './components/ConfirmationModal';
 import { useAuth } from './hooks/useAuth';
 
 const API_URL = "http://localhost:3001";
@@ -33,9 +34,43 @@ function App() {
     const [headerRect, setHeaderRect] = useState(null);
     const { user, setUser, login, register, logout, error: authError, setError: setAuthError } = useAuth();
     const [showLoginModal, setShowLoginModal] = useState(false);
+    const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => { }, type: 'danger' });
     const headerRef = useRef(null);
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
+    const recentSongsRef = useRef(null);
+    const targetScrollRef = useRef(0);
+    const currentScrollRef = useRef(0);
+    const isScrollingRef = useRef(false);
+    const [scrollingTick, setScrollingTick] = useState(0);
+
+    // Inertial Smooth Scroll Loop
+    useEffect(() => {
+        if (!recentSongsRef.current || !isScrollingRef.current) return;
+
+        let frameId;
+        const smooth = () => {
+            if (!recentSongsRef.current) {
+                isScrollingRef.current = false;
+                return;
+            }
+
+            const diff = targetScrollRef.current - currentScrollRef.current;
+            if (Math.abs(diff) > 0.1) {
+                currentScrollRef.current += diff * 0.12;
+                recentSongsRef.current.scrollLeft = currentScrollRef.current;
+                frameId = requestAnimationFrame(smooth);
+            } else {
+                currentScrollRef.current = targetScrollRef.current;
+                recentSongsRef.current.scrollLeft = currentScrollRef.current;
+                isScrollingRef.current = false;
+            }
+        };
+
+        frameId = requestAnimationFrame(smooth);
+        return () => cancelAnimationFrame(frameId);
+    }, [scrollingTick]);
+
     // Global 401 Interceptor
     useEffect(() => {
         const { fetch: originalFetch } = window;
@@ -192,6 +227,35 @@ function App() {
         setSearchLimit(20);
         performSearch(query, 20, 0, false);
     };
+
+    useEffect(() => {
+        const container = recentSongsRef.current;
+        if (!container) return;
+
+        const handleWheel = (e) => {
+            // If user is scrolling over this area, we intercept deltaY and convert to horizontal
+            // and explicitly block vertical propagation to the window
+            if (Math.abs(e.deltaY) > 0) {
+                e.preventDefault();
+                const maxScroll = container.scrollWidth - container.clientWidth;
+
+                if (!isScrollingRef.current) {
+                    currentScrollRef.current = container.scrollLeft;
+                    targetScrollRef.current = container.scrollLeft;
+                }
+
+                targetScrollRef.current = Math.max(0, Math.min(maxScroll, targetScrollRef.current + e.deltaY * 1.5));
+
+                if (!isScrollingRef.current) {
+                    isScrollingRef.current = true;
+                    setScrollingTick(t => t + 1);
+                }
+            }
+        };
+
+        container.addEventListener('wheel', handleWheel, { passive: false });
+        return () => container.removeEventListener('wheel', handleWheel);
+    }, [recentSongs.length]);
 
     const processSong = async (videoIdInput, thumbnail = null, e = null) => {
         // Handle variations (old history or direct pass)
@@ -381,9 +445,18 @@ function App() {
     };
 
     const removeFromRecent = (videoId) => {
-        const newRecent = recentSongs.filter(s => s.videoId !== videoId);
-        setRecentSongs(newRecent);
-        localStorage.setItem('recent_songs', JSON.stringify(newRecent));
+        setConfirmModal({
+            isOpen: true,
+            title: 'Remove Song?',
+            message: 'Are you sure you want to remove this song from your recently sung list?',
+            type: 'danger',
+            confirmText: 'Remove',
+            onConfirm: () => {
+                const newRecent = recentSongs.filter(s => s.videoId !== videoId);
+                setRecentSongs(newRecent);
+                localStorage.setItem('recent_songs', JSON.stringify(newRecent));
+            }
+        });
     };
 
     const toggleFullscreen = () => {
@@ -591,7 +664,14 @@ function App() {
                                 </div>
                             )}
                             <button
-                                onClick={logout}
+                                onClick={() => setConfirmModal({
+                                    isOpen: true,
+                                    title: 'Sign Out?',
+                                    message: 'Are you sure you want to sign out of your account?',
+                                    type: 'danger',
+                                    confirmText: 'Sign Out',
+                                    onConfirm: logout
+                                })}
                                 className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full text-text-muted hover:text-red-400 transition-colors"
                             >
                                 <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -826,7 +906,8 @@ function App() {
                     <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-4 transition-opacity duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
 
                     <div
-                        className={`flex overflow-x-auto gap-4 py-8 px-4 stylized-scrollbar scroll-smooth transition-opacity duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}
+                        ref={recentSongsRef}
+                        className={`flex overflow-x-auto gap-4 py-8 px-4 stylized-scrollbar transition-opacity duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}
                         style={{
                             maskImage: 'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)',
                             WebkitMaskImage: 'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)'
@@ -992,6 +1073,11 @@ function App() {
                 register={register}
                 error={authError}
                 setError={setAuthError}
+            />
+            {/* CONFIRMATION MODAL */}
+            <ConfirmationModal
+                {...confirmModal}
+                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
             />
         </div>
     );
