@@ -115,6 +115,19 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
+app.get('/api/suggestions', async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.status(400).json({ error: 'Query required' });
+
+    try {
+        const results = await runPythonHelper('suggestions.py', [query]);
+        res.json(safeParseJSON(results));
+    } catch (err) {
+        console.error("Suggestions failed", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // CACHE SYSTEM
 const cachePath = path.join(__dirname, 'cache.json');
 let songCache = {};

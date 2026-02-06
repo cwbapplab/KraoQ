@@ -24,6 +24,7 @@ function App() {
     const [transitionStage, setTransitionStage] = useState('idle'); // idle, start, hero
     const [selectedSource, setSelectedSource] = useState(null); // 'search' or 'recent'
     const [isProcessing, setIsProcessing] = useState(false);
+    const [suggestions, setSuggestions] = useState([]);
     const [headerRect, setHeaderRect] = useState(null);
     const headerRef = useRef(null);
 
@@ -67,6 +68,24 @@ function App() {
         audio.addEventListener('timeupdate', handleTimeUpdate);
         return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
     }, [lyricsData, activeLineIndex, karaokeMode, currentSong]);
+
+    // Live Suggestions
+    useEffect(() => {
+        const timer = setTimeout(async () => {
+            if (query && query.length > 2) {
+                try {
+                    const res = await fetch(`${API_URL}/api/suggestions?q=${encodeURIComponent(query)}`);
+                    const data = await res.json();
+                    if (!data.error) setSuggestions(data);
+                } catch (e) {
+                    console.error("Suggestion error", e);
+                }
+            } else {
+                setSuggestions([]);
+            }
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [query]);
 
     const searchMusic = async () => {
         if (!query) return;
@@ -545,7 +564,7 @@ function App() {
                                 {/* SEARCH DROPDOWN */}
                                 {showSearchDropdown && (query || searchHistory.length > 0) && (
                                     <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full bg-card-bg/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                                        {/* Cache Matches Section */}
+                                        {/* Cache Matches Section - Displayed First */}
                                         {query && Object.values(songCache).filter(s =>
                                             s.currentSong.title.toLowerCase().includes(query.toLowerCase()) ||
                                             s.currentSong.artist.toLowerCase().includes(query.toLowerCase())
@@ -576,8 +595,31 @@ function App() {
                                                 </div>
                                             )}
 
+                                        {/* Suggestions Section */}
+                                        {query && suggestions.length > 0 && (
+                                            <div className="p-2 border-b border-white/5">
+                                                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest px-3 mb-2">Suggestions</p>
+                                                {suggestions.map((s, i) => (
+                                                    <div
+                                                        key={`${s.videoId}-${i}`}
+                                                        className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group search-dropdown-item"
+                                                        onClick={(e) => {
+                                                            processSong(s.videoId, s.thumbnail, e);
+                                                            setShowSearchDropdown(false);
+                                                        }}
+                                                    >
+                                                        <img src={s.thumbnail} className="w-12 h-12 rounded object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                                        <div className="flex-1 truncate">
+                                                            <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.title}</p>
+                                                            <p className="text-xs text-text-muted truncate">{s.artists}</p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
                                         {/* Recent Searches */}
-                                        {searchHistory.length > 0 && (
+                                        {!query && searchHistory.length > 0 && (
                                             <div className="p-2">
                                                 <div className="flex justify-between items-center px-3 mb-1">
                                                     <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Recent Searches</p>
@@ -686,11 +728,13 @@ function App() {
                 <div className={`mt-16 w-full relative recent-list-container transition-all duration-1000 ${isTransitioning ? 'animate-none' : 'opacity-100 scale-100 animate-in fade-in duration-700 delay-300'}`}>
                     <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2 transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
 
-                    {/* Shadow Gradients for Fade effect */}
-                    <div className="absolute left-0 top-12 bottom-0 w-20 bg-gradient-to-r from-bg to-transparent z-10 pointer-events-none" />
-                    <div className="absolute right-0 top-12 bottom-0 w-20 bg-gradient-to-l from-bg to-transparent z-10 pointer-events-none" />
-
-                    <div className={`flex overflow-x-auto gap-4 py-8 px-2 stylized-scrollbar scroll-smooth transition-all duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}>
+                    <div
+                        className={`flex overflow-x-auto gap-4 py-8 px-8 stylized-scrollbar scroll-smooth transition-all duration-700 ${isTransitioning ? 'overflow-visible' : ''}`}
+                        style={{
+                            maskImage: 'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)',
+                            WebkitMaskImage: 'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)'
+                        }}
+                    >
                         {recentSongs.map((song, i) => (
                             <div
                                 key={`${song.videoId}-${i}`}
