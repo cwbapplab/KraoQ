@@ -12,6 +12,43 @@
     --accent: #a855f7;
 }
 
+/* Stylized Global Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    transition: all 0.3s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+    box-shadow: 0 0 10px var(--primary);
+}
+
+/* Specific Stylized Scrollbar for horizontal lists */
+.stylized-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.stylized-scrollbar::-webkit-scrollbar {
+    height: 4px;
+    /* Lower height for horizontal lists */
+}
+
+.stylized-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(to right, var(--primary), var(--accent));
+    border-radius: 20px;
+}
+
 body {
     @apply bg-bg text-text font-sans min-h-screen flex justify-center items-center overflow-x-hidden m-0 p-0;
 }

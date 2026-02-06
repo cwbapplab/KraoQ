@@ -13,9 +13,9 @@ const AuroraBackground = ({ audioRef }) => {
     useEffect(() => {
         const palettes = [
             ['#00f2ff', '#00ff88', '#a855f7', '#6366f1'], // Cyan/Green/Purple
-            ['#ff00cc', '#3333ff', '#00cccc', '#66ff66'], // Pink/Blue/Teal
-            ['#00ffa2', '#00e1ff', '#0072ff', '#7000ff'], // Deep Aurora
-            ['#ff9a9e', '#fecfef', '#feada6', '#fbb2d0']  // Sunset
+            ['#00e1ff', '#0072ff', '#7000ff', '#00c3ff'], // Deep Blues/Purples
+            ['#00ffa2', '#6366f1', '#a855f7', '#00f2ff'], // Aurora Borealis (Green/Blue/Indigo)
+            ['#7000ff', '#a855f7', '#ff00cc', '#3333ff']  // Vibrant Neon (Purple/Blue/Pink)
         ];
         setColors(palettes[Math.floor(Math.random() * palettes.length)]);
     }, []);

@@ -12,7 +12,10 @@ function App() {
     const [currentSong, setCurrentSong] = useState(null);
     const [status, setStatus] = useState("");
     const [lyricsData, setLyricsData] = useState([]);
+    const [songCache, setSongCache] = useState({});
     const [recentSongs, setRecentSongs] = useState([]);
+    const [searchHistory, setSearchHistory] = useState([]);
+    const [showSearchDropdown, setShowSearchDropdown] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [activeLineIndex, setActiveLineIndex] = useState(-1);
     const [nextLinesPreview, setNextLinesPreview] = useState("");
@@ -23,10 +26,16 @@ function App() {
     // Load Recent on Mount
     useEffect(() => {
         try {
-            const stored = localStorage.getItem('recent_songs');
-            if (stored) setRecentSongs(JSON.parse(stored));
+            const storedRecent = localStorage.getItem('recent_songs');
+            if (storedRecent) setRecentSongs(JSON.parse(storedRecent));
+
+            const storedCache = localStorage.getItem('song_cache');
+            if (storedCache) setSongCache(JSON.parse(storedCache));
+
+            const storedHistory = localStorage.getItem('search_history');
+            if (storedHistory) setSearchHistory(JSON.parse(storedHistory));
         } catch (e) {
-            console.error("Failed to load history", e);
+            console.error("Failed to load persistence", e);
         }
     }, []);
 
@@ -59,11 +68,21 @@ function App() {
         if (ytMatch) {
             processSong(ytMatch[1]);
             setQuery("");
+            setShowSearchDropdown(false);
             return;
         }
 
+        // Save Search History
+        setSearchHistory(prev => {
+            const filtered = prev.filter(h => h.toLowerCase() !== query.toLowerCase());
+            const newHistory = [query, ...filtered].slice(0, 10);
+            localStorage.setItem('search_history', JSON.stringify(newHistory));
+            return newHistory;
+        });
+
         setIsSearching(true);
         setSearchResults([]);
+        setShowSearchDropdown(false);
         try {
             const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(query)}`);
             const data = await res.json();
@@ -85,7 +104,27 @@ function App() {
             return;
         }
 
-        setStatus("downloading, fetching lyrics & separating instrumental...");
+        // CHECK FRONTEND CACHE
+        if (songCache[videoId]) {
+            const cached = songCache[videoId];
+            console.log("[FRONTEND CACHE HIT]", videoId);
+            setLyricsData(cached.lyricsData);
+            setCurrentSong(cached.currentSong);
+            setKaraokeMode(true);
+            setStatus("Loaded from cache.");
+
+            // Move to top of recent
+            addToRecent({
+                videoId,
+                title: cached.currentSong.title,
+                artist: cached.currentSong.artist,
+                thumbnail: cached.currentSong.thumbnail,
+                hasLyrics: true
+            });
+            return;
+        }
+
+        setStatus("doing our magic...");
         setKaraokeMode(false);
         setSearchResults([]);
 
@@ -123,13 +162,41 @@ function App() {
             setKaraokeMode(true);
             setStatus("Done! Enjoy.");
 
+            // UPDATE FRONTEND CACHE (Limit 100)
+            setSongCache(prev => {
+                const newCache = { ...prev };
+                newCache[videoId] = {
+                    lyricsData: parsed,
+                    currentSong: {
+                        title: result.data.title || "Unknown Song",
+                        artist: result.data.artist || "Unknown Artist",
+                        thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
+                        videoId: videoId,
+                        instrumentalUrl: result.data.instrumentalUrl.startsWith('http')
+                            ? result.data.instrumentalUrl
+                            : `${API_URL}${result.data.instrumentalUrl}`
+                    },
+                    timestamp: Date.now()
+                };
+
+                // Evict oldest if > 100
+                const keys = Object.keys(newCache);
+                if (keys.length > 100) {
+                    const sorted = keys.sort((a, b) => newCache[a].timestamp - newCache[b].timestamp);
+                    delete newCache[sorted[0]];
+                }
+
+                localStorage.setItem('song_cache', JSON.stringify(newCache));
+                return newCache;
+            });
+
         } catch (e) {
             setStatus("Error: " + e.message);
         }
     };
 
     const addToRecent = (song) => {
-        const newRecent = [song, ...recentSongs.filter(s => s.videoId !== song.videoId)].slice(0, 5);
+        const newRecent = [song, ...recentSongs.filter(s => s.videoId !== song.videoId)].slice(0, 20);
         setRecentSongs(newRecent);
         localStorage.setItem('recent_songs', JSON.stringify(newRecent));
     };
@@ -228,7 +295,7 @@ function App() {
 
             {/* SEARCH SECTION */}
             <div className={`transition-all duration-500 delay-100 ${karaokeMode ? 'opacity-0 translate-y-10 pointer-events-none absolute' : 'opacity-100 translate-y-0'}`}>
-                <div className="bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative overflow-hidden group hover:border-primary/30 transition-all">
+                <div className="bg-card-bg/50 backdrop-blur-xl p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all">
                     {/* Search Input */}
                     <div className="relative z-10">
                         <div className="relative flex items-center">
@@ -238,9 +305,90 @@ function App() {
                                 className="w-full bg-black/40 border border-white/5 text-white pl-16 pr-6 py-5 rounded-2xl text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50"
                                 placeholder="Paste YouTube link or search song..."
                                 value={query}
+                                onFocus={() => setShowSearchDropdown(true)}
                                 onChange={(e) => setQuery(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && searchMusic()}
                             />
+
+                            {/* SEARCH DROPDOWN */}
+                            {showSearchDropdown && (query || searchHistory.length > 0) && (
+                                <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full bg-card-bg/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                    {/* Cache Matches Section */}
+                                    {query && Object.values(songCache).filter(s =>
+                                        s.currentSong.title.toLowerCase().includes(query.toLowerCase()) ||
+                                        s.currentSong.artist.toLowerCase().includes(query.toLowerCase())
+                                    ).length > 0 && (
+                                            <div className="p-2 border-b border-white/5">
+                                                <p className="text-[10px] font-bold text-accent uppercase tracking-widest px-3 mb-2">In Your Library</p>
+                                                {Object.values(songCache)
+                                                    .filter(s => s.currentSong.title.toLowerCase().includes(query.toLowerCase()) || s.currentSong.artist.toLowerCase().includes(query.toLowerCase()))
+                                                    .slice(0, 3)
+                                                    .map(s => (
+                                                        <div
+                                                            key={s.currentSong.videoId}
+                                                            className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer group"
+                                                            onClick={() => {
+                                                                processSong(s.currentSong.videoId, s.currentSong.thumbnail);
+                                                                setShowSearchDropdown(false);
+                                                            }}
+                                                        >
+                                                            <img src={s.currentSong.thumbnail} className="w-8 h-8 rounded object-cover" />
+                                                            <div className="flex-1 truncate">
+                                                                <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{s.currentSong.title}</p>
+                                                                <p className="text-xs text-text-muted truncate">{s.currentSong.artist}</p>
+                                                            </div>
+                                                            <Mic2 size={14} className="text-accent" />
+                                                        </div>
+                                                    ))
+                                                }
+                                            </div>
+                                        )}
+
+                                    {/* Recent Searches */}
+                                    {searchHistory.length > 0 && (
+                                        <div className="p-2">
+                                            <div className="flex justify-between items-center px-3 mb-1">
+                                                <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Recent Searches</p>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSearchHistory([]);
+                                                        localStorage.removeItem('search_history');
+                                                    }}
+                                                    className="text-[10px] text-text-muted hover:text-white transition-colors"
+                                                >
+                                                    Clear
+                                                </button>
+                                            </div>
+                                            {searchHistory
+                                                .filter(h => !query || h.toLowerCase().includes(query.toLowerCase()))
+                                                .map((term, i) => (
+                                                    <div
+                                                        key={i}
+                                                        className="flex items-center gap-3 p-3 hover:bg-white/5 rounded-xl cursor-pointer text-sm text-white/70 hover:text-white group"
+                                                        onClick={() => {
+                                                            setQuery(term);
+                                                            // We set timeout to allow setQuery to propagate or just call search
+                                                            setTimeout(() => searchMusic(), 0);
+                                                        }}
+                                                    >
+                                                        <Search size={14} className="text-text-muted group-hover:text-primary" />
+                                                        {term}
+                                                    </div>
+                                                ))
+                                            }
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Close dropdown on click outside logic (global handler) */}
+                            {showSearchDropdown && (
+                                <div
+                                    className="fixed inset-0 z-40"
+                                    onClick={() => setShowSearchDropdown(false)}
+                                />
+                            )}
                             <button
                                 onClick={searchMusic}
                                 disabled={isSearching}
@@ -255,7 +403,7 @@ function App() {
                     {status && (
                         <div className="mt-6 text-center animate-pulse">
                             <p className="text-accent font-medium bg-accent/10 inline-block px-4 py-1 rounded-full text-sm border border-accent/20">
-                                ✨ {status}
+                                {status}
                             </p>
                         </div>
                     )}
@@ -293,14 +441,19 @@ function App() {
 
             {/* RECENT SONGS */}
             {!karaokeMode && recentSongs.length > 0 && searchResults.length === 0 && (
-                <div className="mt-16">
+                <div className="mt-16 w-full overflow-hidden relative">
                     <h3 className="text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-2">Recently Sung</h3>
-                    <div className="flex flex-wrap gap-4">
-                        {recentSongs.map((song) => (
+
+                    {/* Shadow Gradients for Fade effect */}
+                    <div className="absolute left-0 top-12 bottom-0 w-20 bg-gradient-to-r from-bg to-transparent z-10 pointer-events-none" />
+                    <div className="absolute right-0 top-12 bottom-0 w-20 bg-gradient-to-l from-bg to-transparent z-10 pointer-events-none" />
+
+                    <div className="flex overflow-x-auto gap-4 py-4 px-2 stylized-scrollbar scroll-smooth">
+                        {recentSongs.map((song, i) => (
                             <div
-                                key={song.videoId}
+                                key={`${song.videoId}-${i}`}
                                 onClick={() => processSong(song.videoId, song.thumbnail)}
-                                className="bg-card-bg/50 border border-white/5 hover:border-white/20 p-3 pr-6 rounded-full flex items-center gap-3 cursor-pointer hover:bg-white/10 transition-all active:scale-95 group"
+                                className="inline-flex bg-card-bg/50 border border-white/5 hover:border-white/20 p-3 pr-6 rounded-full items-center gap-3 cursor-pointer hover:bg-white/10 transition-all active:scale-95 group shrink-0"
                             >
                                 <img src={song.thumbnail} alt={song.title} className="w-10 h-10 rounded-full object-cover border border-white/10" />
                                 <div className="flex flex-col">
@@ -316,7 +469,7 @@ function App() {
                 <div
                     ref={karaokeContainerRef}
                     className={`
-                mt-16 bg-card-bg/90 rounded-3xl border border-white/10 shadow-2xl overflow-hidden relative
+                mt-4 bg-card-bg/90 rounded-3xl border border-white/10 shadow-2xl overflow-hidden relative
                 ${isFullscreen ? 'fixed inset-0 w-screen h-screen z-50 rounded-none m-0 p-8 flex flex-col justify-center bg-black' : 'p-12'}
             `}
                     onClick={() => setShowControls(prev => !prev)} // Toggle controls in all modes
@@ -347,15 +500,35 @@ function App() {
                             </div>
                         </div>
 
-                        <div className={`text-center w-full z-10 flex flex-col justify-evenly h-full transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
-                            <div className={`font-bold text-white/60 transition-all ${isFullscreen ? 'text-5xl' : 'text-2xl'}`}>
-                                {prevLine ? prevLine.text : ""}
-                            </div>
-                            <div className={`font-bold text-white transition-all scale-110 drop-shadow-[0_0_20px_rgba(99,102,241,0.8)] ${isFullscreen ? 'text-7xl leading-tight' : 'text-4xl'}`}>
-                                {displayCurrText}
-                            </div>
-                            <div className={`font-bold text-white/80 transition-all ${isFullscreen ? 'text-6xl' : 'text-3xl'}`}>
-                                {displayNextText}
+                        <div className={`text-center w-full z-10 relative overflow-hidden h-full transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}>
+                            <div
+                                className="absolute left-0 w-full transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]"
+                                style={{
+                                    // Calculate center offset and shift by active index
+                                    // 25% height is roughly the center of the viewport for the active line
+                                    transform: `translateY(${- (activeLineIndex + 1) * (isFullscreen ? 180 : 100)}px)`,
+                                    top: '50%',
+                                    marginTop: isFullscreen ? '-90px' : '-50px'
+                                }}
+                            >
+                                {/* Initial / Intro Line */}
+                                <div className={`flex items-center justify-center transition-all duration-500 ${isFullscreen ? 'h-[180px]' : 'h-[100px]'} ${activeLineIndex === -1 ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}>
+                                    <span className={`${activeLineIndex === -1 ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500 drop-shadow-[0_0_20px_rgba(99,102,241,0.4)]' : 'text-white'} font-bold ${isFullscreen ? 'text-7xl leading-tight' : 'text-4xl'}`}>
+                                        {activeLineIndex === -1 ? displayCurrText : ""}
+                                    </span>
+                                </div>
+
+                                {lyricsData.map((line, idx) => (
+                                    <div
+                                        key={idx}
+                                        className={`flex items-center justify-center transition-all duration-500 ${isFullscreen ? 'h-[180px] px-12' : 'h-[100px] px-4'} ${idx === activeLineIndex ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}
+                                    >
+                                        <span className={`font-bold transition-all text-center ${idx === activeLineIndex ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500' : 'text-white'} ${isFullscreen ? 'text-7xl leading-tight' : 'text-4xl'} ${idx === activeLineIndex ? 'drop-shadow-[0_0_20px_rgba(99,102,241,0.8)]' : ''}`}>
+                                            {/* Show dots if in interlude/intro and it's the next line */}
+                                            {idx === activeLineIndex + 1 && displayNextText.includes('•') ? displayNextText : line.text}
+                                        </span>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>
