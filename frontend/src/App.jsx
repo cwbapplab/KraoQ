@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, User, LogOut } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, User, LogOut, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
 import AuthModal from './components/AuthModal';
@@ -40,6 +40,7 @@ function App() {
     const { user, setUser, login, register, logout, googleLoginNative, error: authError, setError: setAuthError, isLoading: isAuthLoading } = useAuth();
     const [showLoginModal, setShowLoginModal] = useState(false);
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => { }, type: 'danger' });
+    const [contextMenu, setContextMenu] = useState({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
     const headerRef = useRef(null);
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
@@ -49,6 +50,8 @@ function App() {
     const isScrollingRef = useRef(false);
     const [scrollingTick, setScrollingTick] = useState(0);
     const searchInputRef = useRef(null);
+    const pressTimerRef = useRef(null);
+    const longPressTriggeredRef = useRef(false);
 
     // Inertial Smooth Scroll Loop
     useEffect(() => {
@@ -200,6 +203,19 @@ function App() {
         return () => document.removeEventListener('click', handleClickOutside);
     }, [showSearchDropdown]);
 
+    // Handle clicking outside to close context menu
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (contextMenu.isOpen && !e.target.closest('.context-menu')) {
+                setContextMenu({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
+            }
+        };
+        if (contextMenu.isOpen) {
+            document.addEventListener('click', handleClickOutside);
+        }
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, [contextMenu.isOpen]);
+
     const performSearch = async (searchQuery, limit, skip = 0, isAppending = false) => {
         if (!isAppending) {
             setIsSearching(true);
@@ -310,6 +326,66 @@ function App() {
         container.addEventListener('wheel', handleWheel, { passive: false });
         return () => container.removeEventListener('wheel', handleWheel);
     }, [recentSongs.length, karaokeMode]);
+
+    // Press and hold handlers for recent songs
+    const handlePressStart = (e, song) => {
+        // Reset flag
+        longPressTriggeredRef.current = false;
+
+        // Clear any existing timer
+        if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current);
+        }
+
+        // Get position for context menu
+        const rect = e.currentTarget.getBoundingClientRect();
+        const position = {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+        };
+
+        // Start timer for long press (500ms)
+        pressTimerRef.current = setTimeout(() => {
+            longPressTriggeredRef.current = true;
+            setContextMenu({
+                isOpen: true,
+                videoId: song.videoId,
+                song: song,
+                position: position
+            });
+            // Vibrate on mobile if supported
+            if (navigator.vibrate) {
+                navigator.vibrate(50);
+            }
+        }, 500);
+    };
+
+    const handlePressEnd = () => {
+        // Clear timer if released before 500ms
+        if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current);
+            pressTimerRef.current = null;
+        }
+    };
+
+    const handlePressCancel = () => {
+        // Clear timer if touch/mouse moves away
+        if (pressTimerRef.current) {
+            clearTimeout(pressTimerRef.current);
+            pressTimerRef.current = null;
+        }
+        longPressTriggeredRef.current = false;
+    };
+
+    const handleRecentSongClick = (e, song) => {
+        // Only process if context menu is not open and long press wasn't triggered
+        if (!contextMenu.isOpen && !longPressTriggeredRef.current) {
+            processSong(song, song.thumbnail, e);
+        }
+        // Reset flag after click
+        longPressTriggeredRef.current = false;
+    };
+
 
     const processSong = async (videoIdInput, thumbnail = null, e = null) => {
         // Handle variations (old history or direct pass)
@@ -1037,40 +1113,89 @@ function App() {
                             WebkitMaskImage: 'linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)'
                         }}
                     >
-                        {recentSongs.map((song, i) => (
-                            <div
-                                key={`${song.videoId}-${i}`}
-                                onClick={(e) => processSong(song, song.thumbnail, e)}
-                                className={`
-                                    inline-flex p-3 pr-6 rounded-full items-center gap-3 cursor-pointer transition-[transform,opacity,border-color,background-color] duration-700 shrink-0
-                                    ${isTransitioning ? 'blur-2xl opacity-0 grayscale scale-50 pointer-events-none' : 'bg-card-bg/50 border border-white/5 hover:border-white/20 hover:bg-white/10 active:scale-95 group'}
-                                `}
-                            >
-                                <img
-                                    src={song.thumbnail}
-                                    alt={song.title}
-                                    className="w-10 h-10 rounded-full object-cover border border-white/10"
-                                    onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
-                                />
-                                <div className="flex flex-col">
-                                    <span className="text-sm font-medium text-white/80 group-hover:text-white max-w-[150px] truncate">{song.title}</span>
-                                    {song.artist && <span className="text-[10px] text-white/50 group-hover:text-white/70 max-w-[150px] truncate">{song.artist}</span>}
-                                    {song.hasLyrics && <span className="text-[9px] text-green-400 font-bold uppercase tracking-tighter mt-0.5">Lyrics</span>}
-                                </div>
-                                <button
+                        {recentSongs.map((song, i) => {
+                            const isContextMenuOpen = contextMenu.isOpen && contextMenu.videoId === song.videoId;
+                            return (
+                                <div
+                                    key={`${song.videoId}-${i}`}
                                     onClick={(e) => {
-                                        e.stopPropagation();
-                                        removeFromRecent(song.videoId);
+                                        e.preventDefault();
+                                        handleRecentSongClick(e, song);
                                     }}
-                                    className="ml-2 p-1.5 rounded-full hover:bg-white/20 text-text-muted hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                    onMouseDown={(e) => handlePressStart(e, song)}
+                                    onMouseUp={handlePressEnd}
+                                    onMouseLeave={handlePressCancel}
+                                    onTouchStart={(e) => handlePressStart(e, song)}
+                                    onTouchEnd={handlePressEnd}
+                                    onTouchCancel={handlePressCancel}
+                                    className={`
+                                    inline-flex p-3 pr-6 rounded-full items-center gap-3 cursor-pointer transition-[transform,opacity,border-color,background-color] duration-700 shrink-0
+                                    ${isTransitioning ? 'blur-2xl opacity-0 grayscale scale-50 pointer-events-none' : `bg-card-bg/50 border ${isContextMenuOpen ? 'border-white/20 bg-white/10' : 'border-white/5 hover:border-white/20 hover:bg-white/10'} active:scale-95 group`}
+                                `}
                                 >
-                                    <X size={12} />
-                                </button>
-                            </div>
-                        ))}
+                                    <img
+                                        src={song.thumbnail}
+                                        alt={song.title}
+                                        className="w-10 h-10 rounded-full object-cover border border-white/10"
+                                        onError={(e) => { e.target.src = DEFAULT_THUMBNAIL; }}
+                                    />
+                                    <div className="flex flex-col">
+                                        <span className={`text-sm font-medium max-w-[150px] truncate ${isContextMenuOpen ? 'text-white' : 'text-white/80 group-hover:text-white'}`}>{song.title}</span>
+                                        {song.artist && <span className={`text-[10px] max-w-[150px] truncate ${isContextMenuOpen ? 'text-white/70' : 'text-white/50 group-hover:text-white/70'}`}>{song.artist}</span>}
+                                        {song.hasLyrics && <span className="text-[9px] text-green-400 font-bold uppercase tracking-tighter mt-0.5">Lyrics</span>}
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             )}
+
+            {/* CONTEXT MENU */}
+            <AnimatePresence>
+                {contextMenu.isOpen && (
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        transition={{ duration: 0.2 }}
+                        className="context-menu fixed z-[100]"
+                        style={{
+                            left: `${contextMenu.position.x}px`,
+                            top: `${contextMenu.position.y}px`,
+                            transform: 'translate(-50%, -50%)'
+                        }}
+                    >
+                        <div className="bg-slate-900/95 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl overflow-hidden min-w-[140px]">
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setContextMenu({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
+                                    // Small delay to ensure context menu closes before processing
+                                    setTimeout(() => {
+                                        processSong(contextMenu.song, contextMenu.song.thumbnail);
+                                    }, 100);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-white hover:bg-primary/20 transition-colors border-b border-white/10"
+                            >
+                                <Mic2 size={14} className="text-primary" />
+                                <span className="font-medium text-sm">Sing</span>
+                            </button>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setContextMenu({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
+                                    removeFromRecent(contextMenu.videoId);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-white hover:bg-red-500/20 transition-colors"
+                            >
+                                <Trash2 size={14} className="text-red-400" />
+                                <span className="font-medium text-sm">Remove</span>
+                            </button>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* KARAOKE PLAYER VIEW */}
             {karaokeMode && currentSong && (
