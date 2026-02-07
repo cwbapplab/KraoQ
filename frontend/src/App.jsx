@@ -246,6 +246,10 @@ function App() {
             }
 
             setSearchResults(merged);
+            // Push search state for back button support
+            if (!isAppending) {
+                window.history.pushState({ view: 'search' }, '');
+            }
         } catch (e) {
             setStatus("Error: " + e.message);
         } finally {
@@ -362,6 +366,7 @@ function App() {
                 setTransitionStage('fadeout');
                 setTimeout(() => {
                     setKaraokeMode(true);
+                    window.history.pushState({ view: 'player' }, '');
                     setIsTransitioning(false);
                     setTransitionStage('idle');
                     setSelectedRect(null);
@@ -526,6 +531,24 @@ function App() {
         const handleFsChange = () => {
             setIsFullscreen(!!document.fullscreenElement);
         };
+
+        const handlePopState = (e) => {
+            // Priority: Exiting Karaoke Player
+            if (karaokeMode) {
+                setKaraokeMode(false);
+                if (audioRef.current) audioRef.current.pause();
+                return;
+            }
+
+            // Secondary: Exiting Search Results
+            if (searchResults.length > 0) {
+                setSearchResults([]);
+                setQuery("");
+                setStatus("");
+                return;
+            }
+        };
+
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
                 if (karaokeMode) {
@@ -542,13 +565,17 @@ function App() {
                 }
             }
         };
+
         document.addEventListener('fullscreenchange', handleFsChange);
         window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('popstate', handlePopState);
+
         return () => {
             document.removeEventListener('fullscreenchange', handleFsChange);
             window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('popstate', handlePopState);
         };
-    }, [karaokeMode, showSearchDropdown]);
+    }, [karaokeMode, searchResults.length, showSearchDropdown]);
 
     // Prevent body scroll when in Karaoke Mode
     useEffect(() => {
