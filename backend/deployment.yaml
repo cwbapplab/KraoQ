@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: kraoq-backend
-        image: ghcr.io/kraoq/kraoq-backend:sha-e1df8ea83c1efb48c609e46dbf86163b475fef89
+        image: ghcr.io/kraoq/kraoq-backend:sha-1d649b22c3603455b89790977976e1d35b8c2de6
         imagePullPolicy: Always
         ports:
         - containerPort: 3001
