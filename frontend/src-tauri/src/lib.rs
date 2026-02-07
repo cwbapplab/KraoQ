@@ -12,7 +12,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_google_auth::init())
         .setup(|_app| {
-            // NOTE: Status bar hiding is handled via native Android themes.xml and MainActivity.kt
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![greet])
