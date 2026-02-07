@@ -1054,12 +1054,11 @@ function App() {
                         bg-black overflow-hidden fixed inset-0 z-50 flex flex-col items-center justify-center
                     `}
                     onClick={() => setShowControls(prev => !prev)}
-                    onDoubleClick={toggleFullscreen}
+                    onDoubleClick={!isMobile() ? toggleFullscreen : undefined}
                 >
                     <div className={`
-                         relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-[margin,opacity] duration-300
+                         relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-opacity duration-300
                          py-8
-                         ${showControls ? 'mb-4' : 'mb-0'}
                      `}>
                         <AuroraBackground audioRef={audioRef} />
                         {/* Play/Pause Overlay */}
@@ -1083,7 +1082,7 @@ function App() {
                         </div>
 
                         <div
-                            className={`text-center w-full z-10 relative overflow-hidden transition-all duration-300 ${showControls ? 'blur-sm opacity-50 scale-95' : 'blur-0 opacity-100 scale-100'}`}
+                            className={`text-center w-full z-10 relative overflow-hidden transition-all duration-300 will-change-[transform,opacity] ${showControls ? (!isMobile() ? 'blur-sm opacity-50 scale-95' : 'opacity-40') : 'blur-0 opacity-100 scale-100'}`}
                             style={{
                                 height: '80vh',
                                 maskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)',
@@ -1129,31 +1128,35 @@ function App() {
                         </div>
                     </div>
 
+                    {/* Controls Container - Optimized with Transform */}
                     <div
-                        className={`w-full transition-all duration-300 px-4 sm:px-20 py-3 grid ${!isMobile() ? 'grid-cols-[1fr,auto]' : 'grid-cols-1'} gap-x-0 items-center ${showControls ? 'max-h-32 opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
+                        className={`w-full absolute bottom-0 left-0 right-0 z-40 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] px-4 sm:px-20 py-3 bg-black border-t border-white/5 will-change-transform ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
+                        style={{ paddingBottom: isMobile() ? 'calc(1.5rem + env(safe-area-inset-bottom))' : '1.5rem' }}
                         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking controls
                     >
-                        <audio
-                            ref={audioRef}
-                            src={currentSong.instrumentalUrl}
-                            crossOrigin="anonymous"
-                            controls
-                            controlsList="nodownload noplaybackrate"
-                            autoPlay
-                            className="w-full h-10 rounded-xl invert hue-rotate-180 brightness-150 custom-audio-controls"
-                        />
-                        {!isMobile() && (
-                            <button
-                                onClick={toggleFullscreen}
-                                className="h-10 flex items-center pr-6 text-white/50 hover:text-white transform active:scale-90 transition-all cursor-pointer"
-                                title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-                            >
-                                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                            </button>
-                        )}
+                        <div className={`grid ${!isMobile() ? 'grid-cols-[1fr,auto]' : 'grid-cols-1'} gap-x-0 items-center`}>
+                            <audio
+                                ref={audioRef}
+                                src={currentSong.instrumentalUrl}
+                                crossOrigin="anonymous"
+                                controls
+                                controlsList="nodownload noplaybackrate"
+                                autoPlay
+                                className="w-full h-10 rounded-xl invert hue-rotate-180 brightness-150 custom-audio-controls"
+                            />
+                            {!isMobile() && (
+                                <button
+                                    onClick={toggleFullscreen}
+                                    className="h-10 flex items-center pr-6 text-white/50 hover:text-white transform active:scale-90 transition-all cursor-pointer"
+                                    title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                                >
+                                    {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                                </button>
+                            )}
 
-                        <div className="mt-1 text-text-muted text-[10px] uppercase tracking-widest font-bold px-2 col-span-2 opacity-50">
-                            Mode: <span className="text-accent">Instrumental</span>
+                            <div className="mt-1 text-text-muted text-[10px] uppercase tracking-widest font-bold px-2 col-span-2 opacity-50">
+                                Mode: <span className="text-accent">Instrumental</span>
+                            </div>
                         </div>
                     </div>
 
