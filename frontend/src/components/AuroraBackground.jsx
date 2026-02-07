@@ -21,7 +21,7 @@ const AuroraBackground = ({ audioRef }) => {
     }, []);
 
     useEffect(() => {
-        if (!audioRef.current) return;
+        if (!audioRef || !audioRef.current) return;
 
         const audio = audioRef.current;
         let audioCtx;

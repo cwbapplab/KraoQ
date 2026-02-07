@@ -32,7 +32,7 @@ function App() {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [searchLimit, setSearchLimit] = useState(20);
     const [headerRect, setHeaderRect] = useState(null);
-    const { user, setUser, login, register, logout, googleLoginNative, error: authError, setError: setAuthError } = useAuth();
+    const { user, setUser, login, register, logout, googleLoginNative, error: authError, setError: setAuthError, isLoading: isAuthLoading } = useAuth();
     const [showLoginModal, setShowLoginModal] = useState(false);
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => { }, type: 'danger' });
     const headerRef = useRef(null);
@@ -612,6 +612,28 @@ function App() {
                 displayNextText = dots + displayNextText;
             }
         }
+    }
+
+    if (isAuthLoading) {
+        return (
+            <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center z-[5000]">
+                <AuroraBackground audioRef={audioRef} />
+                <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex flex-col items-center gap-6"
+                >
+                    <div className="w-24 h-24 bg-primary/20 rounded-full flex items-center justify-center relative">
+                        <div className="absolute inset-0 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+                        <Mic2 className="w-10 h-10 text-primary animate-pulse" />
+                    </div>
+                    <div className="text-center">
+                        <h1 className="text-3xl font-black text-white tracking-tighter">KRAOQ</h1>
+                        <p className="text-slate-400 text-sm mt-1">Restoring your session...</p>
+                    </div>
+                </motion.div>
+            </div>
+        );
     }
 
     return (

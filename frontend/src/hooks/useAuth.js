@@ -9,12 +9,27 @@ export function useAuth() {
 
     const checkStatus = async () => {
         try {
-            const res = await fetch(`${API_URL}/auth/status`, { credentials: 'include' });
+            const token = localStorage.getItem('kraoq_token');
+            const headers = {
+                'ngrok-skip-browser-warning': 'true'
+            };
+
+            if (token) {
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+
+            const res = await fetch(`${API_URL}/auth/status`, {
+                headers,
+                credentials: 'include'
+            });
+
             const data = await res.json();
             if (data.isAuthenticated) {
                 setUser(data.user);
             } else {
                 setUser(null);
+                // If we had a token but it's now invalid, clear it
+                if (token) localStorage.removeItem('kraoq_token');
             }
         } catch (err) {
             console.error("Auth check failed", err);

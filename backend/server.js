@@ -93,15 +93,16 @@ app.use(express.json());
 // app.use(express.static('public')); // Serve frontend files (Removed to expose only API)
 app.use('/uploads', express.static('uploads')); // Serve uploaded/generated files
 
-// Session & Auth Middleware
 app.use(session({
     store: redisStore,
-    secret: process.env.SESSION_SECRET || 'keyboard cat',
+    secret: process.env.SESSION_SECRET || 'karaoq-super-secret-key-123',
     resave: false,
     saveUninitialized: false,
+    proxy: true, // Necessary when behind a proxy like ngrok
     cookie: {
-        secure: true, // Required for SameSite: 'none'
-        maxAge: 24 * 60 * 60 * 1000,
+        secure: true,
+        httpOnly: true, // Prevent XSS from reading the cookie
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         sameSite: 'none'
     }
 }));
@@ -339,9 +340,26 @@ app.get('/auth/logout', (req, res) => {
 });
 
 app.get('/auth/status', (req, res) => {
-    console.log(`[AUTH STATUS] User exists: ${!!req.user}, IsAuthenticated: ${req.isAuthenticated()}`);
+    // 1. Session check
     if (req.isAuthenticated()) {
-        res.json({ isAuthenticated: true, user: req.user });
+        return res.json({ isAuthenticated: true, user: req.user });
+    }
+
+    // 2. JWT check (for persistence on mobile)
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token) {
+        jwt.verify(token, JWT_SECRET, async (err, decoded) => {
+            if (err) return res.json({ isAuthenticated: false });
+            try {
+                const user = await User.findById(decoded.id);
+                if (user) return res.json({ isAuthenticated: true, user });
+                res.json({ isAuthenticated: false });
+            } catch (e) {
+                res.json({ isAuthenticated: false });
+            }
+        });
     } else {
         res.json({ isAuthenticated: false });
     }
