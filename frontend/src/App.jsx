@@ -6,7 +6,7 @@ import AuthModal from './components/AuthModal';
 import ConfirmationModal from './components/ConfirmationModal';
 import { useAuth } from './hooks/useAuth';
 
-const API_URL = "http://localhost:3001";
+const API_URL = "https://karaoq.ngrok.io";
 const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2Ljk2IDM2Ljk2IiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgoNPGcgaWQ9IlNWR1JlcG9fYmdDYXJyaWVyIiBzdHJva2Utd2lkdGg9IjAiPgoNPHJlY3QgeD0iLTYuNDgiIHk9Ii02LjQ4IiB3aWR0aD0iMzYuOTYiIGhlaWdodD0iMzYuOTYiIHJ4PSIyLjk1NjgiIGZpbGw9IiMyOTI5MjkiIHN0cm9rZXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjc1IDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjc1IDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
 function App() {
     const [query, setQuery] = useState("");
@@ -32,7 +32,7 @@ function App() {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [searchLimit, setSearchLimit] = useState(20);
     const [headerRect, setHeaderRect] = useState(null);
-    const { user, setUser, login, register, logout, error: authError, setError: setAuthError } = useAuth();
+    const { user, setUser, login, register, logout, googleLoginNative, error: authError, setError: setAuthError } = useAuth();
     const [showLoginModal, setShowLoginModal] = useState(false);
     const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => { }, type: 'danger' });
     const headerRef = useRef(null);
@@ -72,15 +72,46 @@ function App() {
         return () => cancelAnimationFrame(frameId);
     }, [scrollingTick]);
 
-    // Global 401 Interceptor
+    // Global 401 Interceptor + JWT Injector
     useEffect(() => {
         const { fetch: originalFetch } = window;
-        window.fetch = async (...args) => {
-            const response = await originalFetch(...args);
+        window.fetch = async (input, init = {}) => {
+            // Handle both URL strings and Request objects
+            const url = input instanceof Request ? input.url : input;
+            const token = localStorage.getItem('kraoq_token');
+
+            // Only inject token for our API
+            if (token && url.startsWith(API_URL)) {
+                // Initialize headers if missing
+                const headers = init.headers || (input instanceof Request ? input.headers : {});
+
+                // Merge headers safely
+                if (headers instanceof Headers) {
+                    headers.set('Authorization', `Bearer ${token}`);
+                    headers.set('ngrok-skip-browser-warning', 'true');
+                } else if (typeof headers === 'object') {
+                    init.headers = {
+                        ...headers,
+                        'Authorization': `Bearer ${token}`,
+                        'ngrok-skip-browser-warning': 'true'
+                    };
+                }
+            } else if (url.startsWith(API_URL)) {
+                // Even without token, skip ngrok warning for our API
+                const headers = init.headers || {};
+                if (headers instanceof Headers) {
+                    headers.set('ngrok-skip-browser-warning', 'true');
+                } else {
+                    init.headers = { ...headers, 'ngrok-skip-browser-warning': 'true' };
+                }
+            }
+
+            const response = await originalFetch(input, init);
             if (response.status === 401) {
                 // If unauthorized, show login modal and ensure user state is cleared
                 setShowLoginModal(true);
                 setUser(null);
+                localStorage.removeItem('kraoq_token');
             }
             return response;
         };
@@ -1115,6 +1146,7 @@ function App() {
                 onAuthSuccess={() => setShowLoginModal(false)}
                 login={login}
                 register={register}
+                googleLoginNative={googleLoginNative}
                 error={authError}
                 setError={setAuthError}
             />

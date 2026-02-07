@@ -8,6 +8,10 @@ export default defineConfig({
     server: {
         port: 1420,
         strictPort: true,
+        host: true,
+        hmr: {
+            host: '192.168.1.11',
+        },
     },
     envPrefix: ['VITE_', 'TAURI_'],
 })

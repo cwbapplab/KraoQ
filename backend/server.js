@@ -5,7 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const session = require('express-session');
-const FileStore = require('session-file-store')(session);
+const { createClient } = require('redis');
+const { RedisStore } = require('connect-redis');
 const passport = require('./auth');
 const FormData = require('form-data');
 const axios = require('axios');
@@ -13,6 +14,10 @@ const axios = require('axios');
 const mongoose = require('mongoose');
 const User = require('./models/User');
 const CachedSong = require('./models/CachedSong');
+const { OAuth2Client } = require('google-auth-library');
+const jwt = require('jsonwebtoken'); // Added JWT support
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-env';
 
 // Connect to MongoDB
 const mongoUser = process.env.MONGO_USERNAME || 'root';
@@ -25,8 +30,22 @@ mongoose.connect(mongoURI)
     .then(() => console.log('MongoDB Connected'))
     .catch(err => console.error('MongoDB Connection Error:', err));
 
+// Redis Setup
+const redisClient = createClient({
+    url: `redis://${process.env.REDIS_HOST || 'kraoq-redis'}:${process.env.REDIS_PORT || '6379'}`
+});
+redisClient.connect()
+    .then(() => console.log('Redis Connected'))
+    .catch(err => console.error('Redis Connection Error:', err));
+
+const redisStore = new RedisStore({
+    client: redisClient,
+    prefix: "kraoq:sess:",
+});
+
 
 const app = express();
+app.set('trust proxy', 1); // Required for cookies to work behind Ngrok/Proxy
 const PORT = process.env.PORT || 3001;
 
 // Ensure uploads directory exists
@@ -36,16 +55,39 @@ if (!fs.existsSync(uploadDir)) {
 }
 
 // Middleware
+app.use((req, res, next) => {
+    console.log(`[DEBUG] ${req.method} ${req.url} - Origin: ${req.headers.origin}`);
+    next();
+});
+
 app.use(cors({
     origin: function (origin, callback) {
-        // Echo the origin if it matches our dev patterns
-        if (!origin || origin.startsWith('tauri://') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
-            callback(null, origin || true);
-        } else {
+        console.log(`[CORS DEBUG] Origin: ${origin}`);
+        if (!origin) return callback(null, true);
+
+        const allowedOrigins = [
+            'http://localhost:1420',
+            'http://127.0.0.1:1420',
+            'http://tauri.localhost',
+            'tauri://localhost',
+            'https://karaoq.ngrok.io'
+        ];
+
+        // Check if origin is in list or starts with tauri
+        const isAllowed = allowedOrigins.some(o => origin.startsWith(o)) ||
+            origin.includes('localhost') ||
+            origin.includes('127.0.0.1');
+
+        if (isAllowed) {
             callback(null, true);
+        } else {
+            console.log(`[CORS REJECTED] ${origin}`);
+            callback(null, false);
         }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-ID', 'X-Requested-With', 'ngrok-skip-browser-warning']
 }));
 app.use(express.json());
 // app.use(express.static('public')); // Serve frontend files (Removed to expose only API)
@@ -53,24 +95,51 @@ app.use('/uploads', express.static('uploads')); // Serve uploaded/generated file
 
 // Session & Auth Middleware
 app.use(session({
-    store: new FileStore({ path: path.join(uploadDir, 'sessions'), ttl: 86400 }),
+    store: redisStore,
     secret: process.env.SESSION_SECRET || 'keyboard cat',
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: process.env.NODE_ENV === 'production',
+        secure: true, // Required for SameSite: 'none'
         maxAge: 24 * 60 * 60 * 1000,
-        sameSite: 'lax'
+        sameSite: 'none'
     }
 }));
+
 app.use(passport.initialize());
 app.use(passport.session());
 
 // Auth Guard Middleware
 const isAuthenticated = (req, res, next) => {
-    // console.log(`[AUTH CHECK] Path: ${req.path}, Authenticated: ${req.isAuthenticated()}`);
+    // 1. Check if already authenticated via session (Web)
     if (req.isAuthenticated()) return next();
-    res.status(401).json({ error: 'Unauthorized', message: 'Please log in to continue' });
+
+    // 2. Check for JWT Token (Mobile/Tauri)
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized', message: 'Please log in to continue' });
+    }
+
+    jwt.verify(token, JWT_SECRET, async (err, decoded) => {
+        if (err) return res.status(401).json({ error: 'Unauthorized', message: 'Invalid or expired token' });
+
+        try {
+            const user = await User.findById(decoded.id);
+            if (!user) return res.status(401).json({ error: 'Unauthorized', message: 'User not found' });
+
+            // Manually populate user for this request
+            req.user = user;
+            next();
+        } catch (dbErr) {
+            res.status(500).json({ error: 'Internal server error' });
+        }
+    });
+};
+
+const generateToken = (user) => {
+    return jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
 };
 
 // ... helpers ...
@@ -167,7 +236,8 @@ app.post('/auth/register', async (req, res) => {
                 return res.status(500).json({ error: 'Login failed after register' });
             }
             console.log(`[AUTH] Register/Login successful for ${user.username}`);
-            res.json({ message: 'Registered', user });
+            const token = generateToken(user);
+            res.json({ message: 'Registered', user, token });
         });
     } catch (err) {
         console.error("[AUTH] Register Catch Error:", err);
@@ -185,7 +255,8 @@ app.post('/auth/login', (req, res, next) => {
 
         req.login(user, (loginErr) => {
             if (loginErr) return res.status(500).json({ error: 'Login failed' });
-            return res.json({ message: 'Logged in', user });
+            const token = generateToken(user);
+            return res.json({ message: 'Logged in', user, token });
         });
     })(req, res, next);
 });
@@ -201,10 +272,64 @@ app.get('/auth/google/callback',
     passport.authenticate('google', { failureRedirect: '/' }),
     function (req, res) {
         // Successful authentication, redirect home.
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:1420';
+        const frontendUrl = process.env.FRONTEND_URL || 'http://192.168.1.11:1420';
         res.redirect(frontendUrl);
     }
 );
+
+app.post('/auth/google-native', async (req, res) => {
+    const { idToken } = req.body;
+    if (!idToken) return res.status(400).json({ error: 'Token required' });
+
+    try {
+        const audiences = [process.env.GOOGLE_CLIENT_ID];
+        if (process.env.GOOGLE_ANDROID_CLIENT_ID) {
+            audiences.push(process.env.GOOGLE_ANDROID_CLIENT_ID);
+        }
+
+        const ticket = await googleClient.verifyIdToken({
+            idToken,
+            audience: audiences,
+        });
+        const payload = ticket.getPayload();
+        const googleId = payload['sub'];
+        const email = payload['email'];
+        const name = payload['name'];
+        const picture = payload['picture'];
+
+        // Find or create user
+        let user = await User.findOne({
+            $or: [
+                { googleId },
+                { username: email }
+            ]
+        });
+
+        if (!user) {
+            user = new User({
+                googleId,
+                username: email,
+                displayName: name,
+                profilePicture: picture
+            });
+            await user.save();
+        } else if (!user.googleId) {
+            user.googleId = googleId;
+            if (!user.profilePicture) user.profilePicture = picture;
+            await user.save();
+        }
+
+        req.login(user, (err) => {
+            if (err) return res.status(500).json({ error: 'Login failed' });
+            const token = generateToken(user);
+            res.json({ message: 'Logged in', user, token });
+        });
+
+    } catch (err) {
+        console.error("Token verification failed", err);
+        res.status(401).json({ error: 'Invalid token' });
+    }
+});
 
 app.get('/auth/logout', (req, res) => {
     req.logout((err) => {
@@ -214,6 +339,7 @@ app.get('/auth/logout', (req, res) => {
 });
 
 app.get('/auth/status', (req, res) => {
+    console.log(`[AUTH STATUS] User exists: ${!!req.user}, IsAuthenticated: ${req.isAuthenticated()}`);
     if (req.isAuthenticated()) {
         res.json({ isAuthenticated: true, user: req.user });
     } else {
@@ -331,7 +457,7 @@ mongoose.connection.once('open', migrateCacheToMongo);
 // Helper to call external Audio Processor Service
 async function callAudioProcessorService(audioPath, outputDir) {
     const apiKey = process.env.AUDIO_PROCESSOR_API_KEY || "CHANGE_ME_KEY";
-    const processorUrl = process.env.AUDIO_PROCESSOR_URL || 'http://localhost:3002';
+    const processorUrl = process.env.AUDIO_PROCESSOR_URL || 'http://192.168.1.11:3002';
 
     console.log(`[Backend] Streaming file to processor via Axios: ${audioPath}`);
     if (!fs.existsSync(audioPath)) {

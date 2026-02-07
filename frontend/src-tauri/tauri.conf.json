@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "KraoQ",
   "version": "0.1.0",
-  "identifier": "com.work.tauri-app",
+  "identifier": "com.cwbapplab.kraoq",
   "build": {
     "beforeDevCommand": "npm run web",
     "beforeBuildCommand": "npm run build-web",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://192.168.1.11:1420",
     "frontendDist": "../dist"
   },
   "app": {

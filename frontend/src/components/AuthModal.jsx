@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Mail, Lock, User, Github, Chrome, Loader2, ArrowRight } from 'lucide-react';
 
-const API_URL = "http://localhost:3001";
+const API_URL = "https://karaoq.ngrok.io";
 
-const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, setError }) => {
+const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, googleLoginNative, error, setError }) => {
     const [mode, setMode] = useState('login'); // 'login' or 'register'
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -46,8 +46,23 @@ const AuthModal = ({ isOpen, onClose, onAuthSuccess, login, register, error, set
         setError(null);
     };
 
-    const googleLogin = () => {
-        window.location.href = `${API_URL}/auth/google`;
+    const googleLogin = async () => {
+        setIsSubmitting(true);
+        setError(null);
+        try {
+            // Check if we are running in Tauri context
+            if (window.__TAURI_INTERNALS__) {
+                await googleLoginNative();
+                onAuthSuccess();
+            } else {
+                window.location.href = `${API_URL}/auth/google`;
+            }
+        } catch (err) {
+            // Error is handled in the hook
+            console.error("Google login failed:", err);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     if (!isOpen) return null;
