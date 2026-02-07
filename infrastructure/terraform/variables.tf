@@ -18,7 +18,7 @@ variable "instance_memory_in_gbs" {
   default = 24
 }
 
-variable "vpn_password" {
+variable "cloudflare_tunnel_token" {
   type      = string
   sensitive = true
 }

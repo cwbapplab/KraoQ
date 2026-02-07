@@ -19,19 +19,36 @@ You need the following OCI identifiers:
 4.  **Region**: (e.g., `us-ashburn-1`).
 5.  **Compartment OCID**: Identity & Security -> Compartments (usually same as Tenancy for root).
 
+## Step 1.1: Generate SSH Key (If needed)
+
+If you don't have an SSH key pair (usually in `~/.ssh/id_rsa.pub` or `~/.ssh/id_ed25519.pub`):
+
+1.  **Generate Key**:
+    ```bash
+    ssh-keygen -t ed25519 -C "your_email@example.com"
+    ```
+    *   Press Enter to accept defaults.
+2.  **Get Public Key**:
+    ```bash
+    cat ~/.ssh/id_ed25519.pub
+    # OR on Windows PowerShell
+    Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub
+    ```
+3.  **Copy the Output**: You will need this string (starts with `ssh-ed25519 ...`) for the `ssh_public_key` variable in the next step.
+
 ## Step 2: Configure Terraform
 
 1.  Navigate to `infrastructure/terraform`.
 2.  Create a file named `terraform.tfvars`:
     ```hcl
-    tenancy_ocid     = "ocid1.tenancy.oc1..."
-    user_ocid        = "ocid1.user.oc1..."
-    fingerprint      = "xx:xx:xx..."
-    private_key_path = "C:/path/to/your/oci_api_key.pem"
-    region           = "us-ashburn-1"
-    compartment_ocid = "ocid1.tenancy.oc1..."
-    ssh_public_key   = "ssh-rsa AAAAB3..."
-    vpn_password     = "MakeSureThisIsStrong123!"
+    tenancy_ocid            = "ocid1.tenancy.oc1..."
+    user_ocid               = "ocid1.user.oc1..."
+    fingerprint             = "xx:xx:xx..."
+    private_key_path        = "C:/path/to/your/oci_api_key.pem"
+    region                  = "us-ashburn-1"
+    compartment_ocid        = "ocid1.tenancy.oc1..."
+    ssh_public_key          = "ssh-rsa AAAAB3..."
+    cloudflare_tunnel_token = "eyJhIjoi..."
     ```
     > [!WARNING]
     > Never commit `terraform.tfvars` or your `.pem` key to Git!
@@ -67,7 +84,7 @@ To enable the auto-deployment pipeline:
 
 ## Step 5: Configure Cloudflare Tunnel
 
-To securely expose your API without opening public ports on your Oracle instance:
+To securely expose your API without opening public ports on your Oracle instance, we use **Cloudflare Tunnel**.
 
 1.  **Create a Tunnel**:
     *   Go to [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/).
@@ -75,14 +92,12 @@ To securely expose your API without opening public ports on your Oracle instance
     *   Name it (e.g., `KraoQ-Remote`) and save.
 2.  **Get Tunnel Token**:
     *   In the "Install and run a connector" step, copy the **Tunnel Token** (the long alphanumeric string).
-3.  **Local Setup**:
-    *   Add the token to your `.env` file at the project root: `CLOUDFLARE_TUNNEL_TOKEN=your_token_here`.
-4.  **Configure Public Hostname**:
+    *   **Action**: Paste this token into your `terraform.tfvars` file as the `cloudflare_tunnel_token` value.
+3.  **Configure Public Hostname**:
     *   In the Tunnel settings on Cloudflare, go to **Public Hostname** -> **Add a hostname**.
     *   **Hostname**: e.g., `api.yourdomain.com`.
     *   **Service**: Type `HTTP`, URL `kraoq-backend:80`. (Note: We use port 80 because the Kubernetes Service exposes port 80 and maps it to the container's 3001).
-5.  **Security List**:
-    *   Note that the Terraform configuration automatically blocks all public ingress except SSH. All app traffic now flows through this outbound tunnel.
+    *   **Note**: The tunnel agent (`cloudflared`) will be automatically installed and started by the Cloud-init script on the server.
 
 ## Step 6: GitOps Sync (ArgoCD)
 
@@ -102,7 +117,7 @@ The Cloud-init script installed K3s and ArgoCD.
 
     *Using GitOps (ArgoCD):*
     1.  Edit `infrastructure/argocd/apps.yaml` and replace `YOUR_USERNAME` with your GitHub username.
-    2.  **Important**: Edit `backend/deployment.yaml` and set `AUDIO_PROCESSOR_URL` to your Home Server's VPN IP (e.g., `http://10.X.X.X:3002`). You can see this IP in the WireGuard UI.
+    2.  **Important**: If you have a local Audio Processor, ensure it can reach your backend (e.g., via the public Cloudflare Tunnel URL `https://api.yourdomain.com`).
     3.  Commit and push these changes.
     4.  Apply the manifests:
     ```bash
@@ -113,8 +128,7 @@ The Cloud-init script installed K3s and ArgoCD.
       --from-literal=google-client-id=YOUR_GOOGLE_CLIENT_ID \
       --from-literal=google-client-secret=YOUR_GOOGLE_CLIENT_SECRET \
       --from-literal=session-secret=MakeThisALongRandomString \
-      --from-literal=audio-processor-api-key=your_secure_api_key_here \
-      --from-literal=CLOUDFLARE_TUNNEL_TOKEN=your_token_here
+      --from-literal=audio-processor-api-key=your_secure_api_key_here
       
     # 3. Create Storage and Cloudflare Tunnel Agent
     kubectl apply -f https://raw.githubusercontent.com/YOUR_USERNAME/KraoQ/main/backend/pvc.yaml
@@ -148,17 +162,4 @@ To enable "Sign in with Google":
 4.  **Authorized Redirect URIs**: `https://api.yourdomain.com/auth/google/callback` (Use the actual domain configured in Cloudflare).
 5.  Copy the **Client ID** and **Client Secret** for the command above.
 
-## Step 7: Connect via VPN (WireGuard)
 
-To securely access your cluster (and for your local Audio Processor to talk to it, or vice versa if using a site-to-site setup):
-
-1.  **Secure Web UI Access**: The admin UI (port 51821) is **not** exposed to the internet for security. Access it via SSH Tunnel:
-    ```bash
-    ssh -L 51821:localhost:51821 opc@<public_ip>
-    ```
-    Then open `http://localhost:51821` in your browser.
-2.  **Login**: Use the password configured in `cloud-init.yaml` (Default: `kraoq_vpn_secret`).
-3.  **Create Client**: Click "New Client", give it a name (e.g., "HomeServer").
-4.  **Connect**: Download the `.conf` file or scan the QR code.
-    *   **On your local machine**: Import the `.conf` into the WireGuard client and activate requirements.
-5.  **Verify**: You should now be able to ping the internal cluster network (10.0.0.x).

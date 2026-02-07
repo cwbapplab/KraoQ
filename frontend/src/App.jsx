@@ -43,6 +43,7 @@ function App() {
     const currentScrollRef = useRef(0);
     const isScrollingRef = useRef(false);
     const [scrollingTick, setScrollingTick] = useState(0);
+    const searchInputRef = useRef(null);
 
     // Inertial Smooth Scroll Loop
     useEffect(() => {
@@ -149,6 +150,19 @@ function App() {
         }, 300);
         return () => clearTimeout(timer);
     }, [query]);
+
+    // Handle clicking outside to close search dropdown
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (searchInputRef.current && !searchInputRef.current.contains(e.target) && !e.target.closest('.search-dropdown')) {
+                setShowSearchDropdown(false);
+            }
+        };
+        if (showSearchDropdown) {
+            document.addEventListener('click', handleClickOutside);
+        }
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, [showSearchDropdown]);
 
     const performSearch = async (searchQuery, limit, skip = 0, isAppending = false) => {
         if (!isAppending) {
@@ -722,17 +736,21 @@ function App() {
 
             {/* SEARCH SECTION */}
             {!karaokeMode && (
-                <div className={`transition-all duration-1000 ${showSearchDropdown ? 'z-[60]' : 'z-20'} relative animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150`}>
-                    <div className={`bg-card-bg/50 backdrop-blur-xl p-4 sm:p-8 rounded-[2rem] border border-white/10 shadow-2xl relative group hover:border-primary/30 transition-all ${isTransitioning ? 'pointer-events-none' : ''}`}>
+                <div className={`relative z-50 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150`}>
+                    <div className={`bg-card-bg/50 backdrop-blur-xl p-4 sm:p-8 rounded-[2rem] border border-white/10 shadow-2xl relative transition-colors duration-300 ${isTransitioning ? 'pointer-events-none' : ''}`}>
                         {/* Search Input */}
-                        <div className={`relative z-10 transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0 scale-95' : ''}`}>
+                        <div className={`relative z-50 transition-[transform,opacity,filter] duration-300 ${isTransitioning ? 'blur-2xl opacity-0 scale-95' : ''}`}>
                             <div className="relative flex items-center">
-                                <Search className="absolute left-4 sm:left-6 text-text-muted w-5 h-5 sm:w-6 sm:h-6 group-focus-within:text-primary transition-colors" />
+                                <Search className="absolute left-4 sm:left-6 text-text-muted w-5 h-5 sm:w-6 sm:h-6 transition-colors pointer-events-none" />
                                 <input
+                                    ref={searchInputRef}
                                     type="text"
                                     className="w-full bg-black/40 border border-white/5 text-white pl-12 sm:pl-16 pr-16 sm:pr-20 py-4 sm:py-5 rounded-2xl text-base sm:text-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-transparent transition-all placeholder:text-text-muted/50 select-text"
                                     placeholder="Paste YouTube link or search song..."
                                     value={query}
+                                    onPointerDown={(e) => {
+                                        e.target.focus();
+                                    }}
                                     onFocus={() => setShowSearchDropdown(true)}
                                     onChange={(e) => setQuery(e.target.value)}
                                     onKeyDown={(e) => e.key === 'Enter' && searchMusic()}
@@ -740,7 +758,7 @@ function App() {
 
                                 {/* SEARCH DROPDOWN */}
                                 {showSearchDropdown && (query || searchHistory.length > 0) && (
-                                    <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full bg-card-bg/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                                    <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full bg-card-bg/95 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 search-dropdown">
                                         {/* Cache Matches Section - Displayed First */}
                                         {query && Object.values(songCache).filter(s =>
                                             s.currentSong.title.toLowerCase().includes(query.toLowerCase()) ||
@@ -853,12 +871,7 @@ function App() {
                                     </div>
                                 )}
 
-                                {showSearchDropdown && (
-                                    <div
-                                        className="fixed inset-0 z-40"
-                                        onClick={() => setShowSearchDropdown(false)}
-                                    />
-                                )}
+
                                 <button
                                     onClick={searchMusic}
                                     disabled={isSearching}

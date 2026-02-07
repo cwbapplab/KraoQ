@@ -25,37 +25,18 @@ write_files:
       kubectl create namespace kraoq
 
 runcmd:
-  # Open Firewall Ports for K3s and Apps
+  # Open Firewall Ports for K3s
   - firewall-cmd --permanent --add-port=6443/tcp
   - firewall-cmd --permanent --add-port=80/tcp
   - firewall-cmd --permanent --add-port=443/tcp
   - firewall-cmd --permanent --add-port=30000-32767/tcp # NodePorts
-  - firewall-cmd --permanent --add-port=51820/udp # WireGuard
   - firewall-cmd --reload
   
-  # Install Docker (for WireGuard)
-  - dnf install -y dnf-utils zip unzip
-  - dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
-  - dnf install -y docker-ce docker-ce-cli containerd.io
-  - systemctl enable docker
-  - systemctl start docker
+  # Install Cloudflare Tunnel (cloudflared)
+  - dnf config-manager --add-repo https://pkg.cloudflare.com/cloudflared-ascii.repo
+  - dnf install -y cloudflared
+  - cloudflared service install ${cloudflare_tunnel_token}
 
-  # Run WireGuard (wg-easy)
-  # IMPORTANT: Replace 'kraoq123' with a strong password or generate securely
-  - PUBLIC_IP=$(curl -s ifconfig.me)
-  - docker run -d \
-      --name=wg-easy \
-      -e WG_HOST=$PUBLIC_IP \
-      -e PASSWORD=${vpn_password} \
-      -v ~/.wg-easy:/etc/wireguard \
-      -p 51820:51820/udp \
-      -p 51821:51821/tcp \
-      --cap-add=NET_ADMIN \
-      --cap-add=SYS_MODULE \
-      --sysctl="net.ipv4.conf.all.src_valid_mark=1" \
-      --sysctl="net.ipv4.ip_forward=1" \
-      --restart unless-stopped \
-      ghcr.io/wg-easy/wg-easy
 
   # Run installation
   - /root/install_k3s.sh

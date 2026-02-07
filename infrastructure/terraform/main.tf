@@ -47,16 +47,6 @@ resource "oci_core_security_list" "kraoq_sl" {
     destination = "0.0.0.0/0"
   }
 
-  # SSH (Management)
-  ingress_security_rules {
-    protocol = "6" # TCP
-    source   = "0.0.0.0/0"
-    tcp_options {
-      max = 22
-      min = 22
-    }
-  }
-
   # Note: Other ingress rules (HTTP/HTTPS/K3s) were removed in favor of Cloudflare Tunnel (cloudflared).
   # Cloudflare Tunnel only requires outbound (egress) connectivity, which is handled by the 'all' egress rule above.
 }

@@ -3,12 +3,11 @@ data "oci_identity_availability_domains" "ads" {
 }
 
 data "oci_core_images" "oracle_linux_8" {
-  compartment_id           = var.compartment_ocid
-  operating_system         = "Oracle Linux"
-  operating_system_version = "8"
-  shape                    = var.instance_shape
-  sort_by                  = "TIMECREATED"
-  sort_order               = "DESC"
+  compartment_id   = var.tenancy_ocid
+  operating_system = "Oracle Linux"
+  shape            = var.instance_shape
+  sort_by          = "TIMECREATED"
+  sort_order       = "DESC"
 }
 
 resource "oci_core_instance" "kraoq_server" {
@@ -36,7 +35,7 @@ resource "oci_core_instance" "kraoq_server" {
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
     user_data           = base64encode(templatefile("${path.module}/cloud-init.tftpl", {
-      vpn_password = var.vpn_password
+      cloudflare_tunnel_token = var.cloudflare_tunnel_token
     }))
   }
 }

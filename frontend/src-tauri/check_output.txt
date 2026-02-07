@@ -1,0 +1,24 @@
+﻿cargo :     Checking tauri-app v0.1.0 
+(.\frontend\src-tauri)
+At line:1 char:214
++ ... cd src-tauri; cargo check --target 
+aarch64-linux-android 2>&1 | Out-F ...
++                   
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking 
+    ta...tend\src-tauri):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: unused import: `tauri::Manager`
+ --> src\lib.rs:7:5
+  |
+7 | use tauri::Manager;
+  |     ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of 
+`#[warn(unused)]`) on by default
+
+warning: `tauri-app` (lib) generated 1 warning (run 
+`cargo fix --lib -p tauri-app` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] 
+target(s) in 0.93s
