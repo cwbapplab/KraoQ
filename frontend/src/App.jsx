@@ -327,8 +327,11 @@ function App() {
         return () => container.removeEventListener('wheel', handleWheel);
     }, [recentSongs.length, karaokeMode]);
 
-    // Press and hold handlers for recent songs
+    // Press and hold handlers for recent songs (mobile only)
     const handlePressStart = (e, song) => {
+        // Only for touch events (mobile)
+        if (e.type !== 'touchstart') return;
+
         // Reset flag
         longPressTriggeredRef.current = false;
 
@@ -361,8 +364,9 @@ function App() {
     };
 
     const handlePressEnd = () => {
-        // Clear timer if released before 500ms
-        if (pressTimerRef.current) {
+        // Don't clear timer if long press was already triggered (context menu is open)
+        // This allows the user to release the mouse and click on menu options
+        if (pressTimerRef.current && !longPressTriggeredRef.current) {
             clearTimeout(pressTimerRef.current);
             pressTimerRef.current = null;
         }
@@ -375,6 +379,25 @@ function App() {
             pressTimerRef.current = null;
         }
         longPressTriggeredRef.current = false;
+    };
+
+    // Right-click handler for desktop
+    const handleContextMenu = (e, song) => {
+        e.preventDefault(); // Prevent default browser context menu
+
+        // Get mouse position for context menu
+        const position = {
+            x: e.clientX,
+            y: e.clientY
+        };
+
+        longPressTriggeredRef.current = true;
+        setContextMenu({
+            isOpen: true,
+            videoId: song.videoId,
+            song: song,
+            position: position
+        });
     };
 
     const handleRecentSongClick = (e, song) => {
@@ -1122,9 +1145,7 @@ function App() {
                                         e.preventDefault();
                                         handleRecentSongClick(e, song);
                                     }}
-                                    onMouseDown={(e) => handlePressStart(e, song)}
-                                    onMouseUp={handlePressEnd}
-                                    onMouseLeave={handlePressCancel}
+                                    onContextMenu={(e) => handleContextMenu(e, song)}
                                     onTouchStart={(e) => handlePressStart(e, song)}
                                     onTouchEnd={handlePressEnd}
                                     onTouchCancel={handlePressCancel}
