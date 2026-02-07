@@ -53,6 +53,8 @@ body {
     @apply bg-bg text-text font-sans min-h-screen flex justify-center items-start overflow-x-hidden m-0 p-0 pt-10 select-none;
     -webkit-user-select: none;
     user-select: none;
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* Subtle background glow */

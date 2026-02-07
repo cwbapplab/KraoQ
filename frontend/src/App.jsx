@@ -1080,13 +1080,16 @@ function App() {
                         animate-in fade-in duration-500
                         bg-black overflow-hidden fixed inset-0 z-50 flex flex-col items-center justify-center
                     `}
+                    style={{ touchAction: 'none' }}
                     onClick={() => setShowControls(prev => !prev)}
                     onDoubleClick={!isMobile() ? toggleFullscreen : undefined}
                 >
-                    <div className={`
+                    <div
+                        className={`
                          relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-opacity duration-300
-                         py-8
-                     `}>
+                     `}
+                        style={{ touchAction: 'none' }}
+                    >
                         <AuroraBackground audioRef={audioRef} />
                         {/* Play/Pause Overlay */}
                         <div className={`
