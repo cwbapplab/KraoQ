@@ -70,7 +70,8 @@ app.use(cors({
             'http://127.0.0.1:1420',
             'http://tauri.localhost',
             'tauri://localhost',
-            'https://karaoq.ngrok.io'
+            'https://karaoq.ngrok.io',
+            'https://karaoq-app.ngrok.io'
         ];
 
         // Check if origin is in list or starts with tauri
@@ -273,7 +274,7 @@ app.get('/auth/google/callback',
     passport.authenticate('google', { failureRedirect: '/' }),
     function (req, res) {
         // Successful authentication, redirect home.
-        const frontendUrl = process.env.FRONTEND_URL || 'http://192.168.1.11:1420';
+        const frontendUrl = process.env.FRONTEND_URL || 'https://karaoq-app.ngrok.io';
         res.redirect(frontendUrl);
     }
 );
@@ -475,7 +476,7 @@ mongoose.connection.once('open', migrateCacheToMongo);
 // Helper to call external Audio Processor Service
 async function callAudioProcessorService(audioPath, outputDir) {
     const apiKey = process.env.AUDIO_PROCESSOR_API_KEY || "CHANGE_ME_KEY";
-    const processorUrl = process.env.AUDIO_PROCESSOR_URL || 'http://192.168.1.11:3002';
+    const processorUrl = process.env.AUDIO_PROCESSOR_URL || 'https://karaoq-proc.ngrok.io';
 
     console.log(`[Backend] Streaming file to processor via Axios: ${audioPath}`);
     if (!fs.existsSync(audioPath)) {
