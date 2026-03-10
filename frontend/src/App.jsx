@@ -1,11 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2LjYgMzYuOTYiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+Cg08ZyBpZD0iU1ZHUmVwb19iZ0NhcnJpZXIiIHN0cm9rZS13aWR0aD0iMCI+Cg08cmVjdCB4PSItNi40OCIgeT0iLTYuNDgiIHdpZHRoPSIzNi45NiIgaGVpZ2h0PSIzNi45NiIgcng9IjIuOTU2OCIgZmlsbD0iIzI5MjkyOSIgc3Ryb2tlLXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjczIDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjczIDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
+
+const AVAILABLE_VERSIONS = {
+    pythonVersion: ['3.11.8', '3.10.11', '3.9.13'],
+    ffmpegVersion: ['latest', '7.1', '6.1', '5.1'],
+    torchVersion: ['2.5.1', '2.4.1', '2.3.1', '2.2.2'],
+    cudaVersion: ['12.1', '11.8']
+};
 
 const isMobile = () => {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -46,6 +53,9 @@ function App() {
     const [headerRect, setHeaderRect] = useState(null);
     // const [showLoginModal, setShowLoginModal] = useState(false); // Removed for local single-user
     const [contextMenu, setContextMenu] = useState({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
+    const [showSettings, setShowSettings] = useState(false);
+    const [appConfig, setAppConfig] = useState({ gpuEnabled: true });
+    const [isReinstalling, setIsReinstalling] = useState(null); // id of dependency being reinstalled
     const headerRef = useRef(null);
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
@@ -85,11 +95,6 @@ function App() {
         return () => cancelAnimationFrame(frameId);
     }, [scrollingTick]);
 
-    // Auth logic removed for local single-user experience
-    useEffect(() => {
-        // We no longer need to check auth status or intercept 401s
-    }, []);
-
     // Setup Dependencies Logic
     const setupStarted = useRef(false);
     useEffect(() => {
@@ -119,15 +124,51 @@ function App() {
                     unlistenComplete();
                 };
             } catch (e) {
-                console.error("Failed to setup dependencies: ", e);
-                setSetupStatus("Error starting app. Please ensure you have internet access.");
+                console.error("Setup failed", e);
+                setSetupStatus("Critical Error: " + e.message);
             }
         };
-        initApp();
+
+        unlisten = initApp();
+        loadConfig();
+
         return () => {
-            if (unlisten) unlisten();
+            if (unlisten) unlisten.then(f => f && typeof f === 'function' && f());
         };
     }, []);
+
+    const loadConfig = async () => {
+        try {
+            const config = await invoke('get_app_config');
+            setAppConfig(config);
+        } catch (e) {
+            console.error("Failed to load config", e);
+        }
+    };
+
+    const updateConfig = async (newConfig) => {
+        try {
+            setAppConfig(newConfig);
+            await invoke('set_config', { config: newConfig });
+        } catch (e) {
+            console.error("Failed to save config", e);
+        }
+    };
+
+    const handleReinstall = async (id) => {
+        setIsReinstalling(id);
+        try {
+            await invoke('reinstall_dependency', { id });
+            setSetupSteps(prev => prev.map(step =>
+                step.id === id ? { ...step, status: 'done', progress: 100 } : step
+            ));
+        } catch (e) {
+            console.error(`Failed to reinstall ${id}`, e);
+            alert(`Failed to reinstall ${id}: ${e}`);
+        } finally {
+            setIsReinstalling(null);
+        }
+    };
 
     // ... existing refs and effects ...
 
@@ -779,7 +820,31 @@ function App() {
     }
 
     return (
-        <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-4 sm:p-8'}`}>
+        <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[1100px] mx-auto p-4 sm:p-8'}`}>
+            {/* HEADER AREA */}
+            {!karaokeMode && (
+                <header className={`p-6 mb-8 flex justify-between items-center transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : 'opacity-100'}`}>
+                    <div className="flex flex-col gap-1">
+                        <h1 className="text-4xl font-black tracking-tighter text-white flex items-center gap-2">
+                            KraoQ <span className="text-accent text-sm font-bold bg-accent/20 px-2 py-0.5 rounded-full tracking-normal">BETA</span>
+                        </h1>
+                        <p className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] opacity-50">Professional AI Karaoke</p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => setShowSettings(true)}
+                            className="p-3 rounded-full bg-white/5 border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center shadow-lg backdrop-blur-md"
+                            title="Settings"
+                        >
+                            <Settings size={20} />
+                        </motion.button>
+                    </div>
+                </header>
+            )}
+
             {/* Aurora Colors during Transition only */}
             {isTransitioning && !karaokeMode && (
                 <div className="fixed inset-0 z-0 opacity-40 transition-opacity duration-1000">
@@ -1326,6 +1391,142 @@ function App() {
                     )}
                 </div>
             )}
+            {/* SETTINGS OVERLAY */}
+            <AnimatePresence>
+                {showSettings && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[1000] flex items-center justify-end p-4 sm:p-8 pointer-events-none"
+                    >
+                        <motion.div
+                            initial={{ x: 400, opacity: 0 }}
+                            animate={{ x: 0, opacity: 1 }}
+                            exit={{ x: 400, opacity: 0 }}
+                            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                            className="w-full max-w-md h-full bg-slate-900/90 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden"
+                        >
+                            <div className="p-8 border-b border-white/5 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <Settings className="text-primary" size={24} />
+                                    <h2 className="text-2xl font-black text-white tracking-tight">Settings</h2>
+                                </div>
+                                <button
+                                    onClick={() => setShowSettings(false)}
+                                    className="p-2 rounded-full hover:bg-white/5 text-white/40 hover:text-white transition-all"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto stylized-scrollbar p-8 space-y-10">
+                                {/* PERFORMANCE SECTION */}
+                                <section className="space-y-4">
+                                    <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em]">Performance</h3>
+                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`p-2.5 rounded-xl ${appConfig.gpuEnabled ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/20'}`}>
+                                                <Zap size={20} fill={appConfig.gpuEnabled ? 'currentColor' : 'none'} />
+                                            </div>
+                                            <div>
+                                                <p className="text-white font-bold text-sm">GPU Acceleration</p>
+                                                <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">Uses NVIDIA CUDA to speed up vocal separation significantly.</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => updateConfig({ ...appConfig, gpuEnabled: !appConfig.gpuEnabled })}
+                                            className={`w-12 h-6 rounded-full transition-all relative ${appConfig.gpuEnabled ? 'bg-primary' : 'bg-white/10'}`}
+                                        >
+                                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
+                                        </button>
+                                    </div>
+                                </section>
+
+                                {/* DEPENDENCIES SECTION */}
+                                <section className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em]">Manage Dependencies</h3>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        {[
+                                            { id: 'python', key: 'pythonVersion', label: 'Python Engine', desc: 'Core runtime for AI processing' },
+                                            { id: 'ffmpeg', key: 'ffmpegVersion', label: 'FFmpeg Core', desc: 'Audio conversion and encoding' },
+                                            { id: 'models', key: null, label: 'AI Vocal Model', desc: 'Neural network weight files' },
+                                            { id: 'pip', key: null, label: 'Pip Modules', desc: 'Required Python libraries' },
+                                            { id: 'gpu', key: 'torchVersion', label: 'GPU Toolkit', desc: 'NVIDIA CUDA & cuDNN drivers' }
+                                        ].map((dep) => (
+                                            <div key={dep.id} className="group bg-white/5 border border-white/5 rounded-2xl p-4 space-y-4 hover:bg-white/[0.07] transition-all">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex flex-col">
+                                                        <p className="text-white font-bold text-sm">{dep.label}</p>
+                                                        <p className="text-white/30 text-[10px]">{dep.desc}</p>
+                                                    </div>
+                                                    <button
+                                                        disabled={isReinstalling !== null}
+                                                        onClick={() => handleReinstall(dep.id)}
+                                                        className={`
+                                                            flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
+                                                            ${isReinstalling === dep.id
+                                                                ? 'bg-primary text-white cursor-wait'
+                                                                : 'bg-white/5 text-white/40 hover:bg-white/20 hover:text-white'
+                                                            }
+                                                            ${isReinstalling !== null && isReinstalling !== dep.id ? 'opacity-30' : ''}
+                                                        `}
+                                                    >
+                                                        {isReinstalling === dep.id ? (
+                                                            <Loader2 size={12} className="animate-spin" />
+                                                        ) : (
+                                                            <RefreshCw size={12} />
+                                                        )}
+                                                        {isReinstalling === dep.id ? 'Installing...' : 'Re-install'}
+                                                    </button>
+                                                </div>
+
+                                                {dep.key && (
+                                                    <div className="flex items-center gap-4 pt-2 border-t border-white/5">
+                                                        <div className="flex-1 flex flex-col gap-1.5">
+                                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Version</p>
+                                                            <select
+                                                                value={appConfig[dep.key]}
+                                                                onChange={(e) => updateConfig({ ...appConfig, [dep.key]: e.target.value })}
+                                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                                            >
+                                                                {AVAILABLE_VERSIONS[dep.key].map(v => (
+                                                                    <option key={v} value={v} className="bg-slate-900">{v}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        {dep.id === 'gpu' && (
+                                                            <div className="flex-1 flex flex-col gap-1.5">
+                                                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">CUDA</p>
+                                                                <select
+                                                                    value={appConfig.cudaVersion}
+                                                                    onChange={(e) => updateConfig({ ...appConfig, cudaVersion: e.target.value })}
+                                                                    className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                                                >
+                                                                    {AVAILABLE_VERSIONS.cudaVersion.map(v => (
+                                                                        <option key={v} value={v} className="bg-slate-900">{v}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+                            </div>
+
+                            <div className="p-8 border-t border-white/5 bg-white/[0.02]">
+                                <p className="text-center text-white/20 text-[9px] font-bold uppercase tracking-[0.3em]">KraoQ v1.0.0-beta</p>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

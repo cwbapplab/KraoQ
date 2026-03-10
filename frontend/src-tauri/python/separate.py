@@ -79,10 +79,16 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
 
         log(f"Model Dir: {uvr_model_dir}")
 
+        gpu_enabled = os.environ.get("GPU_ENABLED", "1") == "1"
+        log(f"GPU Enabled setting: {gpu_enabled}")
+
         # Force use of NVIDIA GPU if possible
-        # This environment variable helps ONNX picking the right CUDA device
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-        log("Set CUDA_VISIBLE_DEVICES to 0")
+        if gpu_enabled:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+            log("Set CUDA_VISIBLE_DEVICES to 0")
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+            log("GPU Disabled. Set CUDA_VISIBLE_DEVICES to -1")
 
         bin_dir = os.path.join(app_data, "bin")
         if os.path.exists(bin_dir) and bin_dir not in os.environ['PATH']:
