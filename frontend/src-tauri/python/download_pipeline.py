@@ -58,9 +58,10 @@ def download_and_process(video_id, output_dir):
     
     ffmpeg_location = None
     if os.name == 'nt':
-        local_uvr_ffmpeg = r".\AppData\Local\Programs\Ultimate Vocal Remover\ffmpeg.exe"
-        if os.path.exists(local_uvr_ffmpeg):
-            ffmpeg_location = local_uvr_ffmpeg
+        app_data = os.environ.get('APP_DATA_DIR', os.path.dirname(__file__))
+        bundled_ffmpeg = os.path.join(app_data, "bin", "ffmpeg.exe")
+        if os.path.exists(bundled_ffmpeg):
+            ffmpeg_location = bundled_ffmpeg
 
     class MyLogger(object):
         def debug(self, msg): pass

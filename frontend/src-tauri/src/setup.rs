@@ -1,0 +1,169 @@
+use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::{Write, Read};
+use reqwest::Client;
+use tauri::{AppHandle, Manager, State, Emitter};
+use zip::ZipArchive;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+use crate::AppState;
+use serde_json::json;
+
+const FFMPEG_URL: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
+const MODEL_URL: &str = "https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR-MDX-NET-Inst_HQ_5.onnx";
+const GET_PIP_URL: &str = "https://bootstrap.pypa.io/get-pip.py";
+const PYTHON_URL: &str = "https://www.python.org/ftp/python/3.11.8/python-3.11.8-embed-amd64.zip";
+
+pub async fn download_file(url: &str, path: &PathBuf) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let response = client.get(url).send().await.map_err(|e| format!("Failed to request {}: {}", url, e))?;
+    let bytes = response.bytes().await.map_err(|e| format!("Failed to read body: {}", e))?;
+    let mut file = File::create(path).map_err(|e| format!("Failed to create file: {}", e))?;
+    file.write_all(&bytes).map_err(|e| format!("Failed to write to file: {}", e))?;
+    Ok(())
+}
+
+pub fn extract_zip(zip_path: &PathBuf, target_dir: &PathBuf) -> Result<(), String> {
+    let file = File::open(zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Failed to parse zip: {}", e))?;
+    
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| format!("Failed to read zip file item: {}", e))?;
+        let outpath = match file.enclosed_name() {
+            Some(path) => target_dir.join(path),
+            None => continue,
+        };
+
+        if file.name().ends_with('/') {
+            std::fs::create_dir_all(&outpath).map_err(|e| format!("Failed to create zip dir: {}", e))?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                if !p.exists() {
+                    std::fs::create_dir_all(p).map_err(|e| format!("Failed to create zip parent dir: {}", e))?;
+                }
+            }
+            let mut outfile = File::create(&outpath).map_err(|e| format!("Failed to extract file: {}", e))?;
+            std::io::copy(&mut file, &mut outfile).map_err(|e| format!("Failed to write extracted file: {}", e))?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn setup_dependencies(app: AppHandle) -> Result<String, String> {
+    let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let python_env = app_dir.join("python_env");
+    let python_exe = python_env.join("python.exe");
+    let bin_dir = app_dir.join("bin");
+    let models_dir = app_dir.join("models");
+
+    let mut current_step = 0;
+    let total_steps = 4;
+
+    let emit_step = |app: &AppHandle, id: &str, label: &str, status: &str, progress: i32, step_idx: i32| {
+        let _ = app.emit("setup_step", json!({
+            "id": id,
+            "label": label,
+            "status": status, // "pending", "loading", "done", "error"
+            "progress": progress,
+            "totalSteps": total_steps,
+            "currentStepIndex": step_idx
+        }));
+    };
+
+    // --- STEP 1: Python Runtime ---
+    current_step = 1;
+    if !python_exe.exists() {
+        emit_step(&app, "python", "Python Runtime", "loading", 20, current_step);
+        let _ = std::fs::create_dir_all(&python_env);
+        let zip_path = app_dir.join("python.zip");
+        
+        download_file(PYTHON_URL, &zip_path).await?;
+        emit_step(&app, "python", "Python Runtime (Extracting)", "loading", 60, current_step);
+        extract_zip(&zip_path, &python_env)?;
+        let _ = std::fs::remove_file(zip_path);
+
+        // Patch ._pth
+        let pth_file = python_env.join("python311._pth");
+        if pth_file.exists() {
+            if let Ok(mut content) = std::fs::read_to_string(&pth_file) {
+                if content.contains("#import site") {
+                    content = content.replace("#import site", "import site");
+                    let _ = std::fs::write(&pth_file, content);
+                }
+            }
+        }
+        
+        // Install Pip
+        let get_pip_path = python_env.join("get-pip.py");
+        download_file(GET_PIP_URL, &get_pip_path).await?;
+        
+        let mut pip_cmd = tokio::process::Command::new(&python_exe);
+        #[cfg(target_os = "windows")] { pip_cmd.creation_flags(0x08000000); }
+        pip_cmd.arg(&get_pip_path);
+        let _ = pip_cmd.output().await;
+        let _ = std::fs::remove_file(get_pip_path);
+    }
+    emit_step(&app, "python", "Python Runtime", "done", 100, current_step);
+
+    // --- STEP 2: FFmpeg ---
+    current_step = 2;
+    let ffmpeg_exe = bin_dir.join("ffmpeg.exe");
+    if !ffmpeg_exe.exists() {
+        emit_step(&app, "ffmpeg", "FFmpeg (Multimedia Engine)", "loading", 30, current_step);
+        let _ = std::fs::create_dir_all(&bin_dir);
+        let zip_path = bin_dir.join("ffmpeg.zip");
+        download_file(FFMPEG_URL, &zip_path).await?;
+        
+        emit_step(&app, "ffmpeg", "FFmpeg (Extracting)", "loading", 70, current_step);
+        extract_zip(&zip_path, &bin_dir)?;
+        
+        // Move files from nested dir
+        let extracted_path = bin_dir.join("ffmpeg-master-latest-win64-gpl").join("bin");
+        if extracted_path.exists() {
+            if let Ok(entries) = std::fs::read_dir(extracted_path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(name) = path.file_name() {
+                        let dest = bin_dir.join(name);
+                        let _ = std::fs::rename(path, dest);
+                    }
+                }
+            }
+            let _ = std::fs::remove_dir_all(bin_dir.join("ffmpeg-master-latest-win64-gpl"));
+        }
+        let _ = std::fs::remove_file(zip_path);
+    }
+    emit_step(&app, "ffmpeg", "FFmpeg (Multimedia Engine)", "done", 100, current_step);
+
+    // --- STEP 3: AI Models ---
+    current_step = 3;
+    let model_path = models_dir.join("UVR-MDX-NET-Inst_HQ_5.onnx");
+    if !model_path.exists() {
+        emit_step(&app, "models", "AI Vocal Remover Models", "loading", 50, current_step);
+        let _ = std::fs::create_dir_all(&models_dir);
+        download_file(MODEL_URL, &model_path).await?;
+    }
+    emit_step(&app, "models", "AI Vocal Remover Models", "done", 100, current_step);
+
+    // --- STEP 4: Python Modules ---
+    current_step = 4;
+    emit_step(&app, "pip", "Neural Network Modules (Pip)", "loading", 40, current_step);
+    let state = app.state::<AppState>();
+    let req_path = state.python_dir.join("requirements.txt");
+    
+    let mut pip_install = tokio::process::Command::new(&python_exe);
+    #[cfg(target_os = "windows")] { pip_install.creation_flags(0x08000000); }
+    pip_install.arg("-m").arg("pip").arg("install").arg("-r").arg(&req_path);
+    
+    let output = pip_install.output().await.map_err(|e| format!("Pip install failed: {}", e))?;
+    if !output.status.success() {
+        emit_step(&app, "pip", "Neural Network Modules (Error)", "error", 100, current_step);
+        return Err(format!("Pip error: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    emit_step(&app, "pip", "Neural Network Modules (Pip)", "done", 100, current_step);
+
+    app.emit("setup_complete", json!({"success": true})).unwrap();
+    Ok("Setup Complete".to_string())
+}

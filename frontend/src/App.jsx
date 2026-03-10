@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2 } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2LjYgMzYuOTYiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+Cg08ZyBpZD0iU1ZHUmVwb19iZ0NhcnJpZXIiIHN0cm9rZS13aWR0aD0iMCI+Cg08cmVjdCB4PSItNi40OCIgeT0iLTYuNDgiIHdpZHRoPSIzNi45NiIgaGVpZ2h0PSIzNi45NiIgcng9IjIuOTU2OCIgZmlsbD0iIzI5MjkyOSIgc3Ryb2tlLXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjczIDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjczIDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
 
 const isMobile = () => {
@@ -11,6 +12,14 @@ const isMobile = () => {
 };
 
 function App() {
+    const [setupStatus, setSetupStatus] = useState("Checking dependencies...");
+    const [setupSteps, setSetupSteps] = useState([
+        { id: 'python', label: 'Python Runtime', status: 'pending', progress: 0 },
+        { id: 'ffmpeg', label: 'FFmpeg Engine', status: 'pending', progress: 0 },
+        { id: 'models', label: 'AI Vocal Models', status: 'pending', progress: 0 },
+        { id: 'pip', label: 'Neural Modules', status: 'pending', progress: 0 },
+    ]);
+    const [isReady, setIsReady] = useState(false);
     const [query, setQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -80,6 +89,45 @@ function App() {
         // We no longer need to check auth status or intercept 401s
     }, []);
 
+    // Setup Dependencies Logic
+    const setupStarted = useRef(false);
+    useEffect(() => {
+        if (setupStarted.current) return;
+        setupStarted.current = true;
+
+        let unlisten;
+        const initApp = async () => {
+            try {
+                // Listen for granular step updates
+                const unlistenStep = await listen('setup_step', (event) => {
+                    const { id, label, status, progress } = event.payload;
+                    setSetupSteps(prev => prev.map(step =>
+                        step.id === id ? { ...step, label, status, progress } : step
+                    ));
+                    setSetupStatus(label);
+                });
+
+                const unlistenComplete = await listen('setup_complete', () => {
+                    setIsReady(true);
+                });
+
+                await invoke('setup_dependencies');
+
+                return () => {
+                    unlistenStep();
+                    unlistenComplete();
+                };
+            } catch (e) {
+                console.error("Failed to setup dependencies: ", e);
+                setSetupStatus("Error starting app. Please ensure you have internet access.");
+            }
+        };
+        initApp();
+        return () => {
+            if (unlisten) unlisten();
+        };
+    }, []);
+
     // ... existing refs and effects ...
 
 
@@ -91,9 +139,6 @@ function App() {
         try {
             const storedRecent = localStorage.getItem('recent_songs');
             if (storedRecent) setRecentSongs(JSON.parse(storedRecent));
-
-            const storedCache = localStorage.getItem('song_cache');
-            if (storedCache) setSongCache(JSON.parse(storedCache));
 
             const storedHistory = localStorage.getItem('search_history');
             if (storedHistory) setSearchHistory(JSON.parse(storedHistory));
@@ -432,30 +477,13 @@ function App() {
         // Stage 1: Move to Hero (micro-delay to ensure DOM has rendered 'start' position correctly)
         setTimeout(() => setTransitionStage('hero'), 30);
 
-        // CHECK FRONTEND CACHE
-        if (songCache[videoId]) {
-            const cached = songCache[videoId];
-            console.log("[FRONTEND CACHE HIT]", videoId);
-            setLyricsData(cached.lyricsData);
-            setCurrentSong(cached.currentSong);
-            setStatus("Loaded from cache.");
-
-            // Move to top of recent
-            addToRecent({
-                videoId,
-                title: cached.currentSong.title,
-                artist: cached.currentSong.artist,
-                thumbnail: cached.currentSong.thumbnail,
-                hasLyrics: true
-            });
-            finalizeTransition();
-            return;
-        }
-
         setStatus("doing our magic...");
         setKaraokeMode(false);
         setIsProcessing(true);
         setSearchResults([]);
+
+        // NOTE: We no longer check songCache here because URLs in cache might be expired (convertFileSrc assets)
+        // The backend `process_yt` has its own persistent database cache which is faster and reliable.
 
         try {
             const res = await invoke('process_yt', { videoId });
@@ -477,15 +505,13 @@ function App() {
                 title: result.data.title || "Unknown",
                 artist: result.data.artist || "Unknown",
                 thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
-                hasLyrics: true // Since it successfully processed
+                hasLyrics: true
             });
 
-            // Transition is already started in processSong for new fetches
-
-            // UPDATE FRONTEND CACHE (Limit 100)
-            setSongCache(prev => {
-                const newCache = { ...prev };
-                newCache[videoId] = {
+            // Update session cache (keep it in memory only)
+            setSongCache(prev => ({
+                ...prev,
+                [videoId]: {
                     lyricsData: parsed,
                     currentSong: {
                         title: result.data.title || "Unknown Song",
@@ -493,20 +519,9 @@ function App() {
                         thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                         videoId: videoId,
                         instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', ''))
-                    },
-                    timestamp: Date.now()
-                };
-
-                // Evict oldest if > 100
-                const keys = Object.keys(newCache);
-                if (keys.length > 100) {
-                    const sorted = keys.sort((a, b) => newCache[a].timestamp - newCache[b].timestamp);
-                    delete newCache[sorted[0]];
+                    }
                 }
-
-                localStorage.setItem('song_cache', JSON.stringify(newCache));
-                return newCache;
-            });
+            }));
 
             finalizeTransition();
 
@@ -681,6 +696,86 @@ function App() {
         }
     }
 
+    if (!isReady) {
+        const overallProgress = Math.round(
+            (setupSteps.reduce((acc, s) => acc + (s.status === 'done' ? 100 : s.progress), 0) / (setupSteps.length * 100)) * 100
+        );
+
+        return (
+            <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-950 text-white overflow-hidden p-6">
+                <div className="absolute inset-0 z-0 opacity-40">
+                    <AuroraBackground />
+                </div>
+
+                <div className="z-10 bg-slate-900/40 p-10 rounded-[2.5rem] border border-white/10 backdrop-blur-3xl flex flex-col items-center text-center shadow-[0_0_100px_rgba(99,102,241,0.15)] max-w-xl w-full">
+                    <div className="relative mb-8">
+                        <div className="absolute inset-0 blur-2xl bg-primary/20 animate-pulse rounded-full" />
+                        <Loader2 className="w-20 h-20 animate-spin text-primary relative z-10" />
+                    </div>
+
+                    <h1 className="text-5xl font-bold mb-2 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-primary via-accent to-primary">
+                        KraoQ
+                    </h1>
+                    <p className="text-text-muted text-lg mb-10 font-medium">Preparing your personal stage...</p>
+
+                    {/* Step Checklist */}
+                    <div className="w-full space-y-4 mb-10">
+                        {setupSteps.map((step) => (
+                            <div key={step.id} className="flex items-center gap-4 group">
+                                <div className={`shrink-0 w-6 h-6 flex items-center justify-center transition-colors duration-500`}>
+                                    {step.status === 'done' ? (
+                                        <CheckCircle2 className="text-green-400 w-6 h-6" />
+                                    ) : step.status === 'loading' ? (
+                                        <Loader2 className="text-primary w-5 h-5 animate-spin" />
+                                    ) : step.status === 'error' ? (
+                                        <AlertCircle className="text-red-400 w-6 h-6" />
+                                    ) : (
+                                        <Circle className="text-white/10 w-5 h-5" />
+                                    )}
+                                </div>
+                                <div className="flex-1 text-left">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className={`text-sm font-semibold transition-colors duration-300 ${step.status === 'loading' ? 'text-white' : 'text-text-muted'}`}>
+                                            {step.label}
+                                        </span>
+                                        {step.status === 'loading' && (
+                                            <span className="text-[10px] tabular-nums text-primary font-bold">{step.progress}%</span>
+                                        )}
+                                    </div>
+                                    <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                        <motion.div
+                                            initial={{ width: 0 }}
+                                            animate={{ width: `${step.status === 'done' ? 100 : step.progress}%` }}
+                                            className={`h-full rounded-full transition-all duration-500 ${step.status === 'done' ? 'bg-green-400/50' : 'bg-primary'}`}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Overall Progress */}
+                    <div className="w-full">
+                        <div className="flex justify-between text-[11px] font-bold tracking-widest uppercase text-text-muted/50 mb-3 px-1">
+                            <span>Initializing Environment</span>
+                            <span>{overallProgress}%</span>
+                        </div>
+                        <div className="h-3 w-full bg-white/5 rounded-full p-1 border border-white/5 relative">
+                            <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${overallProgress}%` }}
+                                className="h-full rounded-full bg-gradient-to-r from-primary via-accent to-primary shadow-[0_0_15px_rgba(99,102,241,0.5)]"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-8 text-white/20 text-[10px] font-medium tracking-tight animate-pulse select-none">
+                    PLEASE DO NOT CLOSE THE APPLICATION DURING SETUP
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-4 sm:p-8'}`}>

@@ -1,5 +1,6 @@
 yt-dlp
 ytmusicapi
 requests
-audio-separator
+audio-separator[gpu]
 mutagen
+onnxruntime-gpu

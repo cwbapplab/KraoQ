@@ -1,4 +1,8 @@
 mod db;
+mod setup;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -18,6 +22,20 @@ struct CommandResult<T> {
     error: Option<String>,
 }
 
+fn get_python_exe(app: &AppHandle) -> PathBuf {
+    let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    app_dir.join("python_env").join("python.exe")
+}
+
+fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 fn get_python_script_path(app: &AppHandle, script_name: &str) -> PathBuf {
     let state: State<AppState> = app.state();
     state.python_dir.join(script_name)
@@ -26,7 +44,8 @@ fn get_python_script_path(app: &AppHandle, script_name: &str) -> PathBuf {
 #[tauri::command]
 async fn search(query: String, app: AppHandle) -> Result<String, String> {
     let script = get_python_script_path(&app, "search.py");
-    let output = tokio::process::Command::new("python")
+    let python_exe = get_python_exe(&app);
+    let output = create_command(python_exe)
         .arg(&script)
         .arg(&query)
         .output()
@@ -43,7 +62,8 @@ async fn search(query: String, app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn suggestions(query: String, app: AppHandle) -> Result<String, String> {
     let script = get_python_script_path(&app, "suggestions.py");
-    let output = tokio::process::Command::new("python")
+    let python_exe = get_python_exe(&app);
+    let output = create_command(python_exe)
         .arg(&script)
         .arg(&query)
         .output()
@@ -124,9 +144,11 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
     let download_script = state.python_dir.join("download_pipeline.py");
     let separate_script = state.python_dir.join("separate.py");
     let uploads_dir = state.uploads_dir.to_string_lossy().to_string();
+    let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
     
     // 1. Download Pipeline
-    let dl_output = tokio::process::Command::new("python")
+    let python_exe = get_python_exe(&app);
+    let dl_output = create_command(&python_exe)
         .arg(&download_script)
         .arg(&video_id)
         .arg(&uploads_dir)
@@ -154,11 +176,18 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
     let artist = dl_json.get("artist").unwrap().as_str().unwrap().to_string();
 
     // 2. Separate Audio
-    let sep_output = tokio::process::Command::new("python")
+    let safe_id: String = video_id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    let result_filename = format!("{}_separate_result.json", safe_id);
+    let result_file_path = PathBuf::from(&uploads_dir).join(&result_filename);
+    let _ = std::fs::remove_file(&result_file_path);
+
+    let sep_output = create_command(&python_exe)
         .arg(&separate_script)
         .arg(&mp3_path)
         .arg(&uploads_dir)
         .arg("UVR-MDX-NET-Inst_HQ_5.onnx")
+        .arg(&result_file_path)
+        .env("APP_DATA_DIR", app_dir.to_string_lossy().to_string())
         .output()
         .await
         .map_err(|e| format!("Separation failed execution: {}", e))?;
@@ -171,7 +200,18 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
         }
     }
     
-    let sep_json = sep_result.ok_or_else(|| format!("Invalid response from audio separator: {}", sep_stdout))?;
+    let mut sep_json: serde_json::Value = serde_json::json!({"error": "Unknown error processing separation result"});
+    
+    if let Ok(content) = std::fs::read_to_string(&result_file_path) {
+        if let Ok(parsed) = serde_json::from_str(&content) {
+            sep_json = parsed;
+        }
+    } else if let Some(parsed) = sep_result {
+        sep_json = parsed;
+    } else if !sep_output.status.success() {
+        let stderr = String::from_utf8_lossy(&sep_output.stderr);
+        sep_json = serde_json::json!({"error": format!("Separator failed. Exit status: {}. Stderr: {}", sep_output.status, stderr)});
+    }
     
     if let Some(err) = sep_json.get("error") {
         return Err(err.as_str().unwrap_or("Unknown error").to_string());
@@ -246,7 +286,7 @@ pub fn run() {
             
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![search, suggestions, process_yt])
+        .invoke_handler(tauri::generate_handler![search, suggestions, process_yt, setup::setup_dependencies])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

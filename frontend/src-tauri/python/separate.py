@@ -38,25 +38,28 @@ add_nvidia_paths()
 
 from audio_separator.separator import Separator
 
-def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx"):
+def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", result_file=None):
+    if not result_file:
+        result_file = os.path.join(output_dir, "separate_result.json")
     try:
         log(f"--- Starting Separation with audio-separator ---")
         log(f"Input: {audio_path}")
         log(f"Model: {model_name}")
         
-        uvr_root = r".\AppData\Local\Programs\Ultimate Vocal Remover"
-        uvr_model_dir = os.path.join(uvr_root, "models", "MDX_Net_Models")
+        app_data = os.environ.get('APP_DATA_DIR', os.path.dirname(__file__))
+        uvr_model_dir = os.path.join(app_data, "models")
         
         if not os.path.exists(uvr_model_dir):
             uvr_model_dir = os.path.join(output_dir, 'models')
             os.makedirs(uvr_model_dir, exist_ok=True)
-            log(f"UVR path not found, using local models dir: {uvr_model_dir}")
+            log(f"Using local models dir: {uvr_model_dir}")
 
         log(f"Model Dir: {uvr_model_dir}")
 
-        if uvr_root not in os.environ['PATH']:
-            os.environ['PATH'] = uvr_root + os.pathsep + os.environ['PATH']
-            log("Added UVR root to PATH for FFmpeg")
+        bin_dir = os.path.join(app_data, "bin")
+        if os.path.exists(bin_dir) and bin_dir not in os.environ['PATH']:
+            os.environ['PATH'] = bin_dir + os.pathsep + os.environ['PATH']
+            log("Added bin dir to PATH for FFmpeg")
 
         separator = Separator(
             log_level=20, 
@@ -66,7 +69,23 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx"):
         )
 
         log(f"Loading model {model_name}...")
+        
+        # Explicitly check ORT providers before loading
+        try:
+            available_providers = ort.get_available_providers()
+            log(f"Available ORT providers: {available_providers}")
+            if 'CUDAExecutionProvider' not in available_providers:
+                log("WARNING: CUDAExecutionProvider not found! Current ORT might be CPU-only or missing CUDA DLLs in PATH.")
+        except Exception as ort_e:
+            log(f"Error checking ORT providers: {ort_e}")
+
         separator.load_model(model_filename=model_name)
+        
+        # Safer way to check device or just log generic success
+        try:
+            log(f"Model loaded successfully. Ready for separation.")
+        except Exception:
+            pass
 
         log("Running separation...")
         output_files = separator.separate(audio_path)
@@ -90,17 +109,45 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx"):
         }
         
         log(f"Result: {result}")
-        print(json.dumps(result))
+        
+        # Write to file as a fallback in case stdout is swallowed by C-level dup2
+        result_file = os.path.join(output_dir, "separate_result.json")
+        try:
+            with open(result_file, "w", encoding="utf-8") as f:
+                json.dump(result, f)
+        except Exception as file_e:
+            log(f"Failed to write result file: {file_e}")
+
+        sys.__stdout__.write(json.dumps(result) + "\n")
+        sys.__stdout__.flush()
+        try:
+            print(json.dumps(result), flush=True)
+        except Exception:
+            pass
 
     except Exception as e:
         log(f"EXCEPTION: {str(e)}")
         log(traceback.format_exc())
-        print(json.dumps({"error": str(e)}))
+        
+        err_dict = {"error": str(e)}
+        try:
+            with open(result_file, "w", encoding="utf-8") as f:
+                json.dump(err_dict, f)
+        except Exception:
+            pass
+
+        sys.__stdout__.write(json.dumps(err_dict) + "\n")
+        sys.__stdout__.flush()
+        try:
+            print(json.dumps(err_dict), flush=True)
+        except Exception:
+            pass
         sys.exit(1)
 
 if __name__ == "__main__":
     audio_path = sys.argv[1]
     output_dir = sys.argv[2]
     model_name = sys.argv[3] if len(sys.argv) > 3 else "UVR-MDX-NET-Inst_HQ_5.onnx"
+    result_file = sys.argv[4] if len(sys.argv) > 4 else os.path.join(output_dir, "separate_result.json")
     
-    separate(audio_path, output_dir, model_name)
+    separate(audio_path, output_dir, model_name, result_file)
