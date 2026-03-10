@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
-
-const API_URL = "http://localhost:3001";
+import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
 const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2LjYgMzYuOTYiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+Cg08ZyBpZD0iU1ZHUmVwb19iZ0NhcnJpZXIiIHN0cm9rZS13aWR0aD0iMCI+Cg08cmVjdCB4PSItNi40OCIgeT0iLTYuNDgiIHdpZHRoPSIzNi45NiIgaGVpZ2h0PSIzNi45NiIgcng9IjIuOTU2OCIgZmlsbD0iIzI5MjkyOSIgc3Ryb2tlLXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjczIDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjczIDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
 
 const isMobile = () => {
@@ -129,8 +129,8 @@ function App() {
         const timer = setTimeout(async () => {
             if (query && query.length > 2) {
                 try {
-                    const res = await fetch(`${API_URL}/api/suggestions?q=${encodeURIComponent(query)}`, { credentials: 'include' });
-                    const data = await res.json();
+                    const res = await invoke('suggestions', { query });
+                    const data = JSON.parse(res);
                     if (!data.error) setSuggestions(data);
                 } catch (e) {
                     console.error("Suggestion error", e);
@@ -178,8 +178,8 @@ function App() {
         }
 
         try {
-            const res = await fetch(`${API_URL}/api/search?q=${encodeURIComponent(searchQuery)}&limit=${limit}&skip=${skip}`, { credentials: 'include' });
-            const data = await res.json();
+            const res = await invoke('search', { query: searchQuery });
+            const data = JSON.parse(res);
             if (data.error) throw new Error(data.error);
 
             // Find local matches in cache (only needed for first page)
@@ -458,15 +458,8 @@ function App() {
         setSearchResults([]);
 
         try {
-            const res = await fetch(`${API_URL}/api/process-yt`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ videoId }),
-                credentials: 'include'
-            });
-
-            const result = await res.json();
-            if (!res.ok) throw new Error(result.error);
+            const res = await invoke('process_yt', { videoId });
+            const result = JSON.parse(res);
 
             const parsed = parseLRC(result.data.lrc);
             setLyricsData(parsed);
@@ -476,9 +469,7 @@ function App() {
                 artist: result.data.artist || "Unknown Artist",
                 thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                 videoId: videoId,
-                instrumentalUrl: result.data.instrumentalUrl.startsWith('http')
-                    ? result.data.instrumentalUrl
-                    : `${API_URL}${result.data.instrumentalUrl}`
+                instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', ''))
             });
 
             addToRecent({
@@ -501,9 +492,7 @@ function App() {
                         artist: result.data.artist || "Unknown Artist",
                         thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                         videoId: videoId,
-                        instrumentalUrl: result.data.instrumentalUrl.startsWith('http')
-                            ? result.data.instrumentalUrl
-                            : `${API_URL}${result.data.instrumentalUrl}`
+                        instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', ''))
                     },
                     timestamp: Date.now()
                 };

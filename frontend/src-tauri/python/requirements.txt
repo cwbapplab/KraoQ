@@ -1,0 +1,5 @@
+yt-dlp
+ytmusicapi
+requests
+audio-separator
+mutagen

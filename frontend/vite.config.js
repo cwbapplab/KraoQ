@@ -6,9 +6,12 @@ export default defineConfig({
     plugins: [react()],
     clearScreen: false,
     server: {
-        port: 1420,
+        port: 1423,
         strictPort: true,
         host: true,
+        watch: {
+            ignored: ["**/src-tauri/**", "**/models/**", "**/uploads/**"]
+        }
     },
     envPrefix: ['VITE_', 'TAURI_'],
 })
