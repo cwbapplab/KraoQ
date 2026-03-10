@@ -18,6 +18,7 @@ function App() {
         { id: 'ffmpeg', label: 'FFmpeg Engine', status: 'pending', progress: 0 },
         { id: 'models', label: 'AI Vocal Models', status: 'pending', progress: 0 },
         { id: 'pip', label: 'Neural Modules', status: 'pending', progress: 0 },
+        { id: 'gpu', label: 'GPU Acceleration', status: 'pending', progress: 0 },
     ]);
     const [isReady, setIsReady] = useState(false);
     const [query, setQuery] = useState("");

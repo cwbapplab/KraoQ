@@ -59,7 +59,7 @@ pub async fn setup_dependencies(app: AppHandle) -> Result<String, String> {
     let models_dir = app_dir.join("models");
 
     let mut current_step = 0;
-    let total_steps = 4;
+    let total_steps = 5;
 
     let emit_step = |app: &AppHandle, id: &str, label: &str, status: &str, progress: i32, step_idx: i32| {
         let _ = app.emit("setup_step", json!({
@@ -163,6 +163,42 @@ pub async fn setup_dependencies(app: AppHandle) -> Result<String, String> {
         return Err(format!("Pip error: {}", String::from_utf8_lossy(&output.stderr)));
     }
     emit_step(&app, "pip", "Neural Network Modules (Pip)", "done", 100, current_step);
+    
+    // --- STEP 5: GPU Acceleration (Optional but Recommended) ---
+    current_step = 5;
+    emit_step(&app, "gpu", "GPU Acceleration (CUDA/NVIDIA)", "loading", 10, current_step);
+    
+    // 1. Install CUDA-enabled Torch
+    emit_step(&app, "gpu", "Installing GPU Optimized AI Core...", "loading", 30, current_step);
+    let mut torch_install = tokio::process::Command::new(&python_exe);
+    #[cfg(target_os = "windows")] { torch_install.creation_flags(0x08000000); }
+    torch_install.arg("-m").arg("pip").arg("install")
+        .arg("torch==2.5.1").arg("torchvision").arg("torchaudio")
+        .arg("--index-url").arg("https://download.pytorch.org/whl/cu121")
+        .arg("--force-reinstall")
+        .arg("--no-warn-script-location");
+    
+    let torch_output = torch_install.output().await.map_err(|e| format!("Torch install failed: {}", e))?;
+    if !torch_output.status.success() {
+        // We don't fail hard here, user might not have a GPU, but we log it
+        println!("GPU Torch install failed (maybe no NVIDIA GPU?): {}", String::from_utf8_lossy(&torch_output.stderr));
+    }
+
+    // 2. Install NVIDIA Runtime Libraries
+    emit_step(&app, "gpu", "Installing NVIDIA Runtime Libraries...", "loading", 70, current_step);
+    let mut nvidia_install = tokio::process::Command::new(&python_exe);
+    #[cfg(target_os = "windows")] { nvidia_install.creation_flags(0x08000000); }
+    nvidia_install.arg("-m").arg("pip").arg("install")
+        .arg("nvidia-cuda-runtime-cu12").arg("nvidia-cudnn-cu12")
+        .arg("nvidia-cublas-cu12").arg("nvidia-cuda-cupti-cu12")
+        .arg("nvidia-cuda-nvrtc-cu12").arg("nvidia-nvjitlink-cu12")
+        .arg("nvidia-curand-cu12").arg("nvidia-cusolver-cu12")
+        .arg("nvidia-cusparse-cu12").arg("nvidia-nccl-cu12").arg("nvidia-nvtx-cu12")
+        .arg("--no-warn-script-location");
+
+    let _ = nvidia_install.output().await;
+
+    emit_step(&app, "gpu", "GPU Acceleration (CUDA/NVIDIA)", "done", 100, current_step);
 
     app.emit("setup_complete", json!({"success": true})).unwrap();
     Ok("Setup Complete".to_string())

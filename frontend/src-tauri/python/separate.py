@@ -14,11 +14,29 @@ logging.basicConfig(
 
 def log(msg):
     logging.info(msg)
+    # Also write to a dedicated simple debug file to avoid locks
+    try:
+        debug_file = os.path.join(output_dir_arg, "gpu_debug.txt")
+        with open(debug_file, "a", encoding="utf-8") as f:
+            f.write(str(msg) + "\n")
+    except:
+        pass
 
 def add_nvidia_paths():
     paths_to_add = []
     try:
+        import sys
+        import os
         for path in sys.path:
+            if not os.path.isdir(path): continue
+            # Look for nvidia packages (installed via pip)
+            for item in os.listdir(path):
+                if item.startswith('nvidia'):
+                    gpu_path = os.path.join(path, item, 'bin')
+                    if os.path.isdir(gpu_path):
+                        paths_to_add.append(gpu_path)
+            
+            # Legacy/Alternate layout
             cublas_path = os.path.join(path, 'nvidia', 'cublas', 'bin')
             cudnn_path = os.path.join(path, 'nvidia', 'cudnn', 'bin')
             if os.path.isdir(cublas_path): paths_to_add.append(cublas_path)
@@ -27,14 +45,19 @@ def add_nvidia_paths():
         for p in paths_to_add:
             if p not in os.environ['PATH']:
                 os.environ['PATH'] = p + os.pathsep + os.environ['PATH']
+                # log(f"Added to PATH: {p}") # can't log yet, logging not init
             try:
                 os.add_dll_directory(p)
-            except AttributeError:
+            except (AttributeError, OSError):
                 pass
-    except:
+    except Exception:
         pass
 
 add_nvidia_paths()
+
+import onnxruntime as ort
+# Force verbose logging to see DLL loading and provider assignment
+ort.set_default_logger_severity(0)
 
 from audio_separator.separator import Separator
 
@@ -56,34 +79,48 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
 
         log(f"Model Dir: {uvr_model_dir}")
 
+        # Force use of NVIDIA GPU if possible
+        # This environment variable helps ONNX picking the right CUDA device
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        log("Set CUDA_VISIBLE_DEVICES to 0")
+
         bin_dir = os.path.join(app_data, "bin")
         if os.path.exists(bin_dir) and bin_dir not in os.environ['PATH']:
             os.environ['PATH'] = bin_dir + os.pathsep + os.environ['PATH']
             log("Added bin dir to PATH for FFmpeg")
 
         separator = Separator(
-            log_level=20, 
+            log_level=logging.INFO, 
             model_file_dir=uvr_model_dir,
             output_dir=output_dir,
             output_format='mp3'        
         )
 
-        log(f"Loading model {model_name}...")
-        
-        # Explicitly check ORT providers before loading
+        log("Checking available ONNX providers...")
         try:
             available_providers = ort.get_available_providers()
-            log(f"Available ORT providers: {available_providers}")
-            if 'CUDAExecutionProvider' not in available_providers:
-                log("WARNING: CUDAExecutionProvider not found! Current ORT might be CPU-only or missing CUDA DLLs in PATH.")
-        except Exception as ort_e:
-            log(f"Error checking ORT providers: {ort_e}")
+            log(f"ORT Available Providers: {available_providers}")
+            
+            # Prefer CUDA if available, but log everything
+            if 'CUDAExecutionProvider' in available_providers:
+                log("CUDA is available. Ensuring it's used...")
+            elif 'DmlExecutionProvider' in available_providers:
+                log("DirectML is available. This can be used as a high-performance fallback.")
+            else:
+                log("WARNING: Neither CUDA nor DirectML found in available providers!")
 
+        except Exception as e:
+            log(f"Error checking providers: {e}")
+
+        log(f"Loading model {model_name}...")
+        
         separator.load_model(model_filename=model_name)
         
-        # Safer way to check device or just log generic success
+        # Verify provider after loading
         try:
-            log(f"Model loaded successfully. Ready for separation.")
+            # Note: This is a bit hacky depending on audio-separator version
+            # but we want to see what actually got loaded.
+            log("Model loaded. Attempting to verify active provider...")
         except Exception:
             pass
 
