@@ -4,8 +4,9 @@ import json
 import traceback
 import logging
 
+output_dir_arg = sys.argv[2] if len(sys.argv) > 2 else "."
 logging.basicConfig(
-    filename="./logs.txt",
+    filename=os.path.join(output_dir_arg, "logs.txt"),
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     force=True
@@ -47,7 +48,7 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx"):
         uvr_model_dir = os.path.join(uvr_root, "models", "MDX_Net_Models")
         
         if not os.path.exists(uvr_model_dir):
-            uvr_model_dir = os.path.join(os.path.dirname(__file__), 'models')
+            uvr_model_dir = os.path.join(output_dir, 'models')
             os.makedirs(uvr_model_dir, exist_ok=True)
             log(f"UVR path not found, using local models dir: {uvr_model_dir}")
 

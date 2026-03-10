@@ -1,9 +1,0 @@
-{
-    "ignore": [
-        "uploads/*",
-        "cache.json",
-        "node_modules",
-        ".git"
-    ],
-    "delay": "500"
-}
