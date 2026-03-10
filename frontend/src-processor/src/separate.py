@@ -6,9 +6,8 @@ import logging
 
 # Configure basic logging to ensuring we catch everything
 # Adjusted path for new location
-LOG_FILE = r".\audio-processor\debug_separate_service.log"
 logging.basicConfig(
-    filename=LOG_FILE,
+    filename="./logs.txt",
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     force=True

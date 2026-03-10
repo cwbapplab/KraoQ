@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run web",
     "beforeBuildCommand": "npm run build-web",
-    "devUrl": "https://karaoq-app.ngrok.io",
+    "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
   "app": {

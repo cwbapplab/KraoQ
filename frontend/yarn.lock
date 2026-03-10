@@ -165,13 +165,6 @@
     "@babel/helper-string-parser" "^7.27.1"
     "@babel/helper-validator-identifier" "^7.28.5"
 
-"@choochmeque/tauri-plugin-google-auth-api@^0.5.1":
-  version "0.5.1"
-  resolved "https://registry.yarnpkg.com/@choochmeque/tauri-plugin-google-auth-api/-/tauri-plugin-google-auth-api-0.5.1.tgz#43f675c3ca1ad84d1d6285262a105f8d76833f5e"
-  integrity sha512-eo+Akrk0J2V2mJooE8TFSiLGgVNRbpp2FvNKDuObdWt9eshnKeiaeLN749+tPdQULJNiAI9/ttRBmWavs8WV4g==
-  dependencies:
-    "@tauri-apps/api" "^2.0.0"
-
 "@esbuild/aix-ppc64@0.21.5":
   version "0.21.5"
   resolved "https://registry.yarnpkg.com/@esbuild/aix-ppc64/-/aix-ppc64-0.21.5.tgz#c7184a326533fcdf1b8ee0733e21c713b975575f"
@@ -471,11 +464,6 @@
   version "4.57.1"
   resolved "https://registry.yarnpkg.com/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.57.1.tgz#a03348e7b559c792b6277cc58874b89ef46e1e72"
   integrity sha512-mxRFDdHIWRxg3UfIIAwCm6NzvxG0jDX/wBN6KsQFTvKFqqg9vTrWUE68qEjHt19A5wwx5X5aUi2zuZT7YR0jrA==
-
-"@tauri-apps/api@^2.0.0":
-  version "2.10.1"
-  resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-2.10.1.tgz#57c1bae6114ec33d977eb2b50dfefc25fa84fc93"
-  integrity sha512-hKL/jWf293UDSUN09rR69hrToyIXBb8CjGaWC7gfinvnQrBVvnLr08FeFi38gxtugAVyVcTa5/FD/Xnkb1siBw==
 
 "@tauri-apps/cli-darwin-arm64@2.10.0":
   version "2.10.0"

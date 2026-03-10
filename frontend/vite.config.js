@@ -9,9 +9,6 @@ export default defineConfig({
         port: 1420,
         strictPort: true,
         host: true,
-        hmr: {
-            host: 'karaoq-app.ngrok.io',
-        },
     },
     envPrefix: ['VITE_', 'TAURI_'],
 })

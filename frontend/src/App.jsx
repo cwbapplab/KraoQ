@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, User, LogOut, Trash2 } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
-import AuthModal from './components/AuthModal';
-import ConfirmationModal from './components/ConfirmationModal';
-import { useAuth } from './hooks/useAuth';
 
-const API_URL = "https://karaoq.ngrok.io";
+const API_URL = "http://localhost:3001";
 const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2LjYgMzYuOTYiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+Cg08ZyBpZD0iU1ZHUmVwb19iZ0NhcnJpZXIiIHN0cm9rZS13aWR0aD0iMCI+Cg08cmVjdCB4PSItNi40OCIgeT0iLTYuNDgiIHdpZHRoPSIzNi45NiIgaGVpZ2h0PSIzNi45NiIgcng9IjIuOTU2OCIgZmlsbD0iIzI5MjkyOSIgc3Ryb2tlLXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjczIDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjczIDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
 
 const isMobile = () => {
@@ -37,9 +34,7 @@ function App() {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [searchLimit, setSearchLimit] = useState(20);
     const [headerRect, setHeaderRect] = useState(null);
-    const { user, setUser, login, register, logout, googleLoginNative, error: authError, setError: setAuthError, isLoading: isAuthLoading } = useAuth();
-    const [showLoginModal, setShowLoginModal] = useState(false);
-    const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => { }, type: 'danger' });
+    // const [showLoginModal, setShowLoginModal] = useState(false); // Removed for local single-user
     const [contextMenu, setContextMenu] = useState({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
     const headerRef = useRef(null);
     const audioRef = useRef(null);
@@ -80,53 +75,10 @@ function App() {
         return () => cancelAnimationFrame(frameId);
     }, [scrollingTick]);
 
-    // Global 401 Interceptor + JWT Injector
+    // Auth logic removed for local single-user experience
     useEffect(() => {
-        const { fetch: originalFetch } = window;
-        window.fetch = async (input, init = {}) => {
-            // Handle both URL strings and Request objects
-            const url = input instanceof Request ? input.url : input;
-            const token = localStorage.getItem('kraoq_token');
-
-            // Only inject token for our API
-            if (token && url.startsWith(API_URL)) {
-                // Initialize headers if missing
-                const headers = init.headers || (input instanceof Request ? input.headers : {});
-
-                // Merge headers safely
-                if (headers instanceof Headers) {
-                    headers.set('Authorization', `Bearer ${token}`);
-                    headers.set('ngrok-skip-browser-warning', 'true');
-                } else if (typeof headers === 'object') {
-                    init.headers = {
-                        ...headers,
-                        'Authorization': `Bearer ${token}`,
-                        'ngrok-skip-browser-warning': 'true'
-                    };
-                }
-            } else if (url.startsWith(API_URL)) {
-                // Even without token, skip ngrok warning for our API
-                const headers = init.headers || {};
-                if (headers instanceof Headers) {
-                    headers.set('ngrok-skip-browser-warning', 'true');
-                } else {
-                    init.headers = { ...headers, 'ngrok-skip-browser-warning': 'true' };
-                }
-            }
-
-            const response = await originalFetch(input, init);
-            if (response.status === 401) {
-                // If unauthorized, show login modal and ensure user state is cleared
-                setShowLoginModal(true);
-                setUser(null);
-                localStorage.removeItem('kraoq_token');
-            }
-            return response;
-        };
-        return () => {
-            window.fetch = originalFetch;
-        };
-    }, [setUser]);
+        // We no longer need to check auth status or intercept 401s
+    }, []);
 
     // ... existing refs and effects ...
 
@@ -513,11 +465,6 @@ function App() {
                 credentials: 'include'
             });
 
-            if (res.status === 401) {
-                setShowLoginModal(true);
-                return;
-            }
-
             const result = await res.json();
             if (!res.ok) throw new Error(result.error);
 
@@ -745,27 +692,6 @@ function App() {
         }
     }
 
-    if (isAuthLoading) {
-        return (
-            <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center z-[5000]">
-                <AuroraBackground audioRef={audioRef} />
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex flex-col items-center gap-6"
-                >
-                    <div className="w-24 h-24 bg-primary/20 rounded-full flex items-center justify-center relative">
-                        <div className="absolute inset-0 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-                        <Mic2 className="w-10 h-10 text-primary animate-pulse" />
-                    </div>
-                    <div className="text-center">
-                        <h1 className="text-3xl font-black text-white tracking-tighter">KRAOQ</h1>
-                        <p className="text-slate-400 text-sm mt-1">Restoring your session...</p>
-                    </div>
-                </motion.div>
-            </div>
-        );
-    }
 
     return (
         <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[900px] p-4 sm:p-8'}`}>
@@ -848,44 +774,7 @@ function App() {
                 </div>
             )}
 
-            {/* AUTH HEADER */}
-            {!karaokeMode && !isTransitioning && (
-                <div className="fixed top-2 right-2 sm:top-4 sm:right-4 z-[60] animate-in fade-in duration-700">
-                    {user ? (
-                        <div className="flex items-center gap-2 sm:gap-3 bg-black/40 backdrop-blur-xl p-1.5 sm:p-2 pl-3 sm:pl-4 rounded-full border border-white/10 hover:border-primary/50 transition-colors shadow-lg">
-                            <span className="text-xs sm:text-sm font-medium text-white">{user.displayName || "User"}</span>
-                            {user.profilePicture ? (
-                                <img src={user.profilePicture} alt="Profile" className="w-6 h-6 sm:w-8 sm:h-8 rounded-full border border-white/20" />
-                            ) : (
-                                <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-primary/20 flex items-center justify-center border border-primary/30">
-                                    <User className="text-primary w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                </div>
-                            )}
-                            <button
-                                onClick={() => setConfirmModal({
-                                    isOpen: true,
-                                    title: 'Sign Out?',
-                                    message: 'Are you sure you want to sign out of your account?',
-                                    type: 'danger',
-                                    confirmText: 'Sign Out',
-                                    onConfirm: logout
-                                })}
-                                className="p-1.5 sm:p-2 hover:bg-white/10 rounded-full text-text-muted hover:text-red-400 transition-colors"
-                            >
-                                <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                            </button>
-                        </div>
-                    ) : (
-                        <button
-                            onClick={() => setShowLoginModal(true)}
-                            className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-full font-bold text-sm hover:bg-slate-200 transition-colors shadow-lg hover:shadow-cyan-500/20"
-                        >
-                            <User size={16} />
-                            Sign In
-                        </button>
-                    )}
-                </div>
-            )}
+            {/* AUTH HEADER removed for local single-user */}
 
             {/* HEADER */}
             {!karaokeMode && (
@@ -1352,22 +1241,6 @@ function App() {
                     )}
                 </div>
             )}
-            {/* AUTH MODAL */}
-            <AuthModal
-                isOpen={showLoginModal}
-                onClose={() => setShowLoginModal(false)}
-                onAuthSuccess={() => setShowLoginModal(false)}
-                login={login}
-                register={register}
-                googleLoginNative={googleLoginNative}
-                error={authError}
-                setError={setAuthError}
-            />
-            {/* CONFIRMATION MODAL */}
-            <ConfirmationModal
-                {...confirmModal}
-                onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-            />
         </div>
     );
 }
