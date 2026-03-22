@@ -5,6 +5,8 @@ import AuroraBackground from './components/AuroraBackground';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { QRCodeSVG } from 'qrcode.react';
+
 const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2LjYgMzYuOTYiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+Cg08ZyBpZD0iU1ZHUmVwb19iZ0NhcnJpZXIiIHN0cm9rZS13aWR0aD0iMCI+Cg08cmVjdCB4PSItNi40OCIgeT0iLTYuNDgiIHdpZHRoPSIzNi45NiIgaGVpZ2h0PSIzNi45NiIgcng9IjIuOTU2OCIgZmlsbD0iIzI5MjkyOSIgc3Ryb2tlLXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjczIDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjczIDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
 
 const AVAILABLE_VERSIONS = {
@@ -55,6 +57,10 @@ function App() {
     const [contextMenu, setContextMenu] = useState({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
     const [showSettings, setShowSettings] = useState(false);
     const [appConfig, setAppConfig] = useState({ gpuEnabled: true });
+    const [isPartyMode, setIsPartyMode] = useState(false);
+    const [partyUrl, setPartyUrl] = useState("");
+    const [queue, setQueue] = useState([]); // Array of { videoId, title, artists, status }
+
     const [isReinstalling, setIsReinstalling] = useState(null); // id of dependency being reinstalled
     const [gpuStatus, setGpuStatus] = useState(null); // { status, message, torchVersion, ... }
     const [isCheckingGpu, setIsCheckingGpu] = useState(false);
@@ -215,7 +221,117 @@ function App() {
         }
     };
 
-    // ... existing refs and effects ...
+    const loadPartyUrl = useCallback(async () => {
+        try {
+            const url = await invoke('get_party_url');
+            setPartyUrl(url);
+        } catch (e) {
+            console.error("Failed to load party url", e);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (isPartyMode) {
+            loadPartyUrl();
+        }
+    }, [isPartyMode, loadPartyUrl]);
+
+    // Listen for queue updates from local webserver
+    useEffect(() => {
+        let unlistenParty;
+        const initPartyListener = async () => {
+            unlistenParty = await listen('party_add_to_queue', (event) => {
+                const payload = event.payload;
+                setQueue(prev => {
+                    if (prev.some(item => item.videoId === payload.videoId)) return prev;
+                    return [...prev, { ...payload, status: 'waiting' }];
+                });
+            });
+        };
+        initPartyListener();
+        return () => { if (unlistenParty) unlistenParty(); };
+    }, []);
+
+    // Process Queue Worker
+    useEffect(() => {
+        if (!isPartyMode || queue.length === 0) return;
+
+        const processNext = async () => {
+            const nextItem = queue.find(item => item.status === 'waiting');
+            if (!nextItem) return;
+
+            setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'processing' } : i));
+
+            try {
+                await invoke('process_yt', { videoId: nextItem.videoId });
+                setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'ready' } : i));
+                
+                // If not currently in Karaoke, trigger instantly? 
+                // Mostly let it handle via ended or manually.
+            } catch (e) {
+                console.error("Queue download failed", e);
+                setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'error', error: e.toString() } : i));
+            }
+        };
+
+        const hasProcessing = queue.some(item => item.status === 'processing');
+        if (!hasProcessing) {
+            processNext();
+        }
+    }, [queue, isPartyMode]);
+
+    // Play next from Queue function
+    const playFromQueue = useCallback(async (songItem) => {
+         setIsProcessing(true);
+         try {
+             const res = await invoke('process_yt', { videoId: songItem.videoId });
+             const result = JSON.parse(res);
+             const parsed = result.data.segments;
+             setLyricsData(parsed);
+
+             setCurrentSong({
+                 title: songItem.title,
+                 artist: songItem.artists,
+                 thumbnail: songItem.thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
+                 videoId: songItem.videoId,
+                 instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
+                 vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : ""
+             });
+
+             setQueue(prev => prev.filter(i => i.videoId !== songItem.videoId));
+             setKaraokeMode(true);
+             setIsProcessing(false);
+             
+             // Clear from Rust Party Queue Mutex state so singer can add again
+             await invoke('remove_from_party_queue', { videoId: songItem.videoId });
+         } catch (e) {
+
+             console.error("Queue play failed", e);
+             setIsProcessing(false);
+         }
+    }, []);
+
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+
+        const handleEnded = () => {
+             if (isPartyMode) {
+                 const nextReady = queue.find(item => item.status === 'ready');
+                 if (nextReady) {
+                     playFromQueue(nextReady);
+                 } else {
+                     setKaraokeMode(false);
+                 }
+             } else {
+                 setKaraokeMode(false);
+             }
+        };
+
+        audio.addEventListener('ended', handleEnded);
+        return () => audio.removeEventListener('ended', handleEnded);
+    }, [queue, isPartyMode, playFromQueue]);
+
 
 
 
@@ -925,6 +1041,16 @@ function App() {
                         <motion.button
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
+                            onClick={() => setIsPartyMode(prev => !prev)}
+                            className={`p-3 rounded-full border border-white/10 ${isPartyMode ? 'bg-accent/20 text-accent border-accent/30' : 'bg-white/5 text-white/50'} hover:text-white hover:bg-white/10 transition-all flex items-center justify-center shadow-lg backdrop-blur-md`}
+                            title={isPartyMode ? "Disable Party Mode" : "Enable Party Mode"}
+                        >
+                            <Zap size={20} fill={isPartyMode ? 'currentColor' : 'none'} />
+                        </motion.button>
+
+                        <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
                             onClick={() => setShowSettings(true)}
                             className="p-3 rounded-full bg-white/5 border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center shadow-lg backdrop-blur-md"
                             title="Settings"
@@ -932,6 +1058,7 @@ function App() {
                             <Settings size={20} />
                         </motion.button>
                     </div>
+
                 </header>
             )}
 
@@ -1819,7 +1946,19 @@ function App() {
                     </motion.div>
                 )}
             </AnimatePresence>
+            {/* PARTY MODE QR CODE */}
+            {isPartyMode && partyUrl && (
+                <div className="fixed top-4 left-4 z-[9999] bg-slate-900/90 backdrop-blur-xl p-3 rounded-3xl border border-white/10 shadow-2xl flex flex-col items-center gap-2 max-w-[160px] animate-in slide-in-from-left-4 duration-300">
+
+                    <div className="p-2 bg-white rounded-2xl">
+                        <QRCodeSVG value={partyUrl} size={120} bgColor="#ffffff" fgColor="#000000" level="H" />
+                    </div>
+                    <p className="text-[10px] font-bold text-white/90 text-center tracking-tight">Scan to Add Songs</p>
+                    <p className="text-[8px] text-white/40 truncate w-full text-center hover:text-white transition-colors cursor-pointer" onClick={() => navigator.clipboard.writeText(partyUrl)}>{partyUrl.replace('http://', '')}</p>
+                </div>
+            )}
         </div>
+
     );
 }
 

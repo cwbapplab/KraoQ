@@ -1,5 +1,9 @@
 mod db;
 mod setup;
+mod server;
+
+
+
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -20,7 +24,11 @@ pub struct AppState {
     pub uploads_dir: PathBuf,
     pub app_data_dir: PathBuf,
     pub active_processes: Arc<AsyncMutex<HashMap<String, oneshot::Sender<()>>>>,
+    pub party_port: Mutex<Option<u16>>,
+    pub party_queue: Mutex<Vec<server::QueueRequest>>,
 }
+
+
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -174,12 +182,12 @@ struct CommandResult<T> {
     error: Option<String>,
 }
 
-fn get_python_exe(app: &AppHandle) -> PathBuf {
+pub(crate) fn get_python_exe(app: &AppHandle) -> PathBuf {
     let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
     app_dir.join("python_env").join("python.exe")
 }
 
-fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+pub(crate) fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
     cmd.kill_on_drop(true);
     #[cfg(target_os = "windows")]
@@ -189,10 +197,11 @@ fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Comm
     cmd
 }
 
-fn get_python_script_path(app: &AppHandle, script_name: &str) -> PathBuf {
+pub(crate) fn get_python_script_path(app: &AppHandle, script_name: &str) -> PathBuf {
     let state: State<AppState> = app.state();
     state.python_dir.join(script_name)
 }
+
 
 #[tauri::command]
 async fn search(query: String, app: AppHandle) -> Result<String, String> {
@@ -606,7 +615,11 @@ async fn reinstall_dependency(id: String, app: AppHandle) -> Result<(), String> 
     Ok(())
 }
 
+
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -638,9 +651,23 @@ pub fn run() {
                 uploads_dir,
                 app_data_dir: app_dir,
                 active_processes: Arc::new(AsyncMutex::new(HashMap::new())),
+                party_port: Mutex::new(None),
+                party_queue: Mutex::new(Vec::new()),
+            });
+
+            
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+
+                if let Ok(port) = server::start_server(app_handle.clone()).await {
+                    let state = app_handle.state::<AppState>();
+                    *state.party_port.lock().unwrap() = Some(port);
+                    println!("Party Mode Server running on port {}", port);
+                }
             });
             
             Ok(())
+
         })
         .invoke_handler(tauri::generate_handler![
             search, 
@@ -651,8 +678,12 @@ pub fn run() {
             set_config,
             get_app_config,
             check_gpu_status,
-            reinstall_dependency
+            reinstall_dependency,
+            server::get_party_url,
+            server::remove_from_party_queue
+
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
 }

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KraoQ Party Mode</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: #020617; /* slate-950 */
+            color: white;
+            overflow-x: hidden;
+        }
+        .glass {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#6366f1', // indigo-500
+                        accent: '#ec4899',   // pink-500
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="p-4 sm:p-6 flex flex-col items-center min-h-screen">
+    <div id="app" class="w-full max-w-md flex flex-col gap-6"></div>
+
+    <!-- Preact and HTM -->
+    <script type="module">
+        import { h, render } from 'https://esm.sh/preact';
+        import { useState, useEffect, useRef } from 'https://esm.sh/preact/hooks';
+        import htm from 'https://esm.sh/htm';
+
+        const html = htm.bind(h);
+
+        function App() {
+            const [query, setQuery] = useState('');
+            const [results, setResults] = useState([]);
+            const [suggestions, setSuggestions] = useState([]);
+            const [isSearching, setIsSearching] = useState(false);
+            const [status, setStatus] = useState('');
+            const [showSuggestions, setShowSuggestions] = useState(false);
+            const [singer, setSinger] = useState(localStorage.getItem('singer') || '');
+            const [liveQueue, setLiveQueue] = useState([]);
+            const [deviceId] = useState(() => {
+                let id = localStorage.getItem('deviceId');
+                if (!id) {
+                    id = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(16);
+                    localStorage.setItem('deviceId', id);
+                }
+                return id;
+            });
+
+            useEffect(() => {
+                localStorage.setItem('singer', singer);
+            }, [singer]);
+
+
+            // Periodic Live Queue Fetching
+            useEffect(() => {
+                const fetchQueue = async () => {
+                    try {
+                        const res = await fetch('/api/queue');
+                        const data = await res.json();
+                        setLiveQueue(data);
+                    } catch (e) { console.error(e); }
+                };
+                fetchQueue();
+                const interval = setInterval(fetchQueue, 3000);
+                return () => clearInterval(interval);
+            }, []);
+
+
+
+            // Fetch Suggestions
+            useEffect(() => {
+                const timer = setTimeout(async () => {
+                    if (query && query.length > 2) {
+                        try {
+                            const res = await fetch(`/api/suggestions?query=${encodeURIComponent(query)}`);
+                            const data = await res.json();
+                            if (!data.error) setSuggestions(data);
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    } else {
+                        setSuggestions([]);
+                    }
+                }, 300);
+                return () => clearTimeout(timer);
+            }, [query]);
+
+            const searchMusic = async () => {
+                if (!query) return;
+                setIsSearching(true);
+                setShowSuggestions(false);
+                setStatus('');
+                try {
+                    const res = await fetch(`/api/search?query=${encodeURIComponent(query)}`);
+                    const data = await res.json();
+                    if (data.error) throw new Error(data.error);
+                    setResults(data);
+                } catch (e) {
+                    setStatus('Search Failed: ' + e.message);
+                } finally {
+                    setIsSearching(false);
+                }
+            };
+
+            const addToQueue = async (video) => {
+                const singerClean = singer.trim();
+                if (!singerClean) {
+                    setStatus('Please enter your name above!');
+                    return;
+                }
+                try {
+                    setStatus(`Adding "${video.title}"...`);
+                    const res = await fetch('/api/queue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            videoId: video.videoId,
+                            title: video.title,
+                            artists: video.artists || video.channel,
+                            thumbnail: video.thumbnail,
+                            singer: singerClean,
+                            deviceId: deviceId
+                        })
+                    });
+
+                    const data = await res.json();
+                    if (res.ok) {
+                        setStatus(`Added to Queue!`);
+                        // Auto clear status
+                        setTimeout(() => setStatus(''), 3000);
+                    } else {
+                        throw new Error(data.message || 'Failed to add');
+                    }
+                } catch (e) { setStatus('Error: ' + e.message); }
+            };
+
+            const removeFromQueue = async (item) => {
+                try {
+                    setStatus(`Removing "${item.title}"...`);
+                    const res = await fetch('/api/remove_queue', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            videoId: item.videoId || item.video_id,
+                            deviceId: deviceId
+                        })
+                    });
+
+                    if (res.ok) {
+                        setStatus(`Removed!`);
+                        setTimeout(() => setStatus(''), 2000);
+                    } else { throw new Error('Failed to remove'); }
+                } catch (e) { setStatus('Error: ' + e.message); }
+            };
+
+
+            return html`
+                <div class="flex flex-col gap-4">
+                    <!-- Header -->
+                    <div class="text-center">
+                        <h1 class="text-4xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary via-accent to-primary animate-pulse">
+                            KraoQ
+                        </h1>
+                        <p class="text-slate-400 text-xs mt-1 uppercase tracking-wider">Party Mode</p>
+                    </div>
+
+                    <!-- Singer Input -->
+                    <div class="glass p-1 rounded-full flex items-center shadow-lg border ${!singer.trim() ? 'border-primary/40' : 'border-white/10'} transition-all">
+                        <i data-lucide="user" class="text-primary ml-4 w-5 h-5"></i>
+                        <input
+                            type="text"
+                            class="w-full bg-transparent p-3 text-white focus:outline-none placeholder:text-slate-500 font-semibold text-sm"
+                            placeholder="Your Name (Required to Sing)"
+                            value=${singer}
+                            onInput=${(e) => setSinger(e.target.value)}
+                        />
+                    </div>
+
+
+                    <!-- Search Input -->
+                    <div class="relative">
+                        <div class="glass p-1 rounded-full flex items-center shadow-lg border border-white/10">
+                            <i data-lucide="search" class="text-slate-400 ml-4 w-5 h-5"></i>
+                            <input
+                                type="text"
+                                class="w-full bg-transparent p-3 text-white focus:outline-none placeholder:text-slate-500"
+                                placeholder="Search Songs..."
+                                value=${query}
+                                onInput=${(e) => { setQuery(e.target.value); setShowSuggestions(true); }}
+                                onKeyDown=${(e) => e.key === 'Enter' && searchMusic()}
+                            />
+                            <button
+                                onClick=${searchMusic}
+                                class="aspect-square p-3 bg-gradient-to-r from-primary to-accent text-white rounded-full flex items-center justify-center font-bold active:scale-95 transition-transform"
+                            >
+                                <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+
+                        <!-- Suggestions -->
+                        ${showSuggestions && suggestions.length > 0 && html`
+                            <div class="absolute top-full left-0 right-0 mt-2 glass rounded-2xl overflow-hidden shadow-2xl z-50">
+                                ${suggestions.map(s => html`
+                                    <div
+                                        onClick=${() => { addToQueue(s); setShowSuggestions(false); }}
+                                        class="p-4 hover:bg-white/5 cursor-pointer flex items-center gap-3 border-b border-white/5 last:border-0"
+                                    >
+
+                                        <img src=${s.thumbnail} class="w-10 h-10 rounded-lg object-cover" />
+                                        <div class="flex-1 truncate">
+                                            <p class="text-sm font-semibold truncate text-white">${s.title}</p>
+                                            <p class="text-xs text-slate-400 truncate">${s.artists}</p>
+                                        </div>
+                                    </div>
+                                `)}
+                            </div>
+                        `}
+                    </div>
+
+                    <!-- Status Banner -->
+                    ${status && html`
+                        <div class="p-3 bg-white/5 border border-white/10 rounded-xl text-center text-sm font-medium animate-pulse">
+                            ${status}
+                        </div>
+                    `}
+
+                    <!-- Live Queue -->
+                    ${liveQueue.length > 0 && html`
+                        <div class="flex flex-col gap-2">
+                             <div class="flex items-center gap-2 px-1">
+                                  <i data-lucide="list-video" class="w-4 h-4 text-accent"></i>
+                                  <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Up Next (${liveQueue.length})</h3>
+                             </div>
+                             <div class="flex flex-col gap-2">
+                                  ${liveQueue.map(item => html`
+                                      <div class="glass p-3 rounded-xl flex items-center justify-between shadow border-l-2 border-l-accent animate-in slide-in-from-top-1">
+                                           <div class="truncate flex-1">
+                                                <h4 class="font-bold text-sm truncate text-white">${item.title}</h4>
+                                                <p class="text-[10px] text-slate-400">Singer: <span class="text-accent font-black tracking-wide">${item.singer}</span></p>
+                                           </div>
+                                            ${item.deviceId === deviceId && html`
+                                               <button onClick=${() => removeFromQueue(item)} class="p-2 rounded-lg hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-all active:scale-95" title="Remove my song">
+                                                   <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                               </button>
+                                           `}
+
+                                      </div>
+
+                                  `)}
+                             </div>
+                        </div>
+                    `}
+
+                    <!-- Absolute Full list of Results -->
+
+                    <div class="flex flex-col gap-3 min-h-[50vh]">
+                        ${isSearching && html`
+                            <div class="flex flex-col items-center justify-center p-12 text-slate-500">
+                                <span class="animate-spin h-8 w-8 border-4 border-slate-700 border-t-primary rounded-full mb-3"></span>
+                                <span class="text-sm font-medium">Searching Stage...</span>
+                            </div>
+                        `}
+
+                        ${!isSearching && results.map(video => html`
+                            <div class="glass p-3 rounded-2xl flex items-center gap-3 shadow-md hover:bg-white/5 transition-colors">
+                                <img
+                                    src=${video.thumbnail}
+                                    class="w-16 h-16 rounded-xl object-cover shadow"
+                                    onerror=${(e) => { e.target.src = 'https://music.youtube.com/img/on_platform_logo_dark.svg'; }}
+                                />
+                                <div class="flex-1 truncate">
+                                    <h4 class="font-bold text-sm truncate text-white">${video.title}</h4>
+                                    <p class="text-xs text-slate-400 truncate">${video.artists || video.channel}</p>
+                                </div>
+                                <button
+                                    onClick=${() => addToQueue(video)}
+                                    class="p-3 rounded-xl bg-white/5 hover:bg-primary hover:text-white transition-all active:scale-95 text-primary"
+                                >
+                                    <i data-lucide="plus" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        `)}
+                    </div>
+                </div>
+            `;
+        }
+
+        render(html`<${App} />`, document.getElementById('app'));
+
+        // Initialize Lucide icons
+        setTimeout(() => {
+            if (window.lucide) lucide.createIcons();
+        }, 100);
+    </script>
+</body>
+</html>
