@@ -239,10 +239,31 @@ struct ProcessResult {
     segments: Vec<Segment>
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct Word {
+    word: String,
+    start: f64,
+    end: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 struct Segment {
     time: f64,
     text: String,
+    #[serde(default)]
+    words: Vec<Word>,
+}
+
+fn parse_timestamp(ts: &str) -> Option<f64> {
+    let parts: Vec<&str> = ts.split(':').collect();
+    if parts.len() == 2 {
+        if let (Ok(minutes), Ok(seconds)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+            return Some(minutes * 60.0 + seconds);
+        }
+    }
+    None
 }
 
 fn parse_lrc(content: &str) -> Vec<Segment> {
@@ -251,15 +272,47 @@ fn parse_lrc(content: &str) -> Vec<Segment> {
         if let Some(start) = line.find('[') {
             if let Some(end) = line.find(']') {
                 let time_str = &line[start + 1..end];
-                let text = line[end + 1..].trim().to_string();
-                let parts: Vec<&str> = time_str.split(':').collect();
-                if parts.len() == 2 {
-                    if let (Ok(minutes), Ok(seconds)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
-                        segments.push(Segment {
-                            time: minutes * 60.0 + seconds,
-                            text,
-                        });
+                let text = line[end + 1..].trim();
+                if let Some(line_time) = parse_timestamp(time_str) {
+                    let mut words = Vec::new();
+                    let mut cleaned_text = String::new();
+                    
+                    let tokens: Vec<&str> = text.split(|c| c == '<' || c == '>').collect();
+                    if tokens.len() >= 4 {
+                        let mut i = 1;
+                        while i + 2 < tokens.len() {
+                            let start_str = tokens[i].trim();
+                            let word_text = tokens[i + 1].trim();
+                            let end_str = tokens[i + 2].trim();
+                            
+                            if let (Some(s_time), Some(e_time)) = (parse_timestamp(start_str), parse_timestamp(end_str)) {
+                                if !word_text.is_empty() {
+                                    words.push(Word {
+                                        word: word_text.to_string(),
+                                        start: s_time,
+                                        end: e_time,
+                                    });
+                                    if !cleaned_text.is_empty() {
+                                        cleaned_text.push(' ');
+                                    }
+                                    cleaned_text.push_str(word_text);
+                                }
+                            }
+                            i += 4;
+                        }
                     }
+                    
+                    let final_text = if words.is_empty() {
+                        text.to_string() // Fallback non-ELRC
+                    } else {
+                        cleaned_text
+                    };
+
+                    segments.push(Segment {
+                        time: line_time,
+                        text: final_text,
+                        words,
+                    });
                 }
             }
         }
@@ -316,7 +369,33 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
             let conn = state.db_conn.lock().unwrap();
             if let Ok(Some(cached)) = db::get_song(&conn, &video_id) {
                 if !cached.missing_lyrics && std::path::Path::new(&cached.instrumental_path).exists() {
-                    if let Ok(lrc_content) = std::fs::read_to_string(&cached.lrc_path) {
+                    let mut final_lrc_path = cached.lrc_path.clone();
+                    if final_lrc_path.ends_with(".lrc") {
+                        let cand1 = format!("{}.elrc", final_lrc_path);
+                        let cand2 = final_lrc_path.replace(".lrc", ".elrc");
+                        if std::path::Path::new(&cand1).exists() {
+                            final_lrc_path = cand1;
+                        } else if std::path::Path::new(&cand2).exists() {
+                            final_lrc_path = cand2;
+                        }
+                    }
+                    if let Ok(lrc_content) = std::fs::read_to_string(&final_lrc_path) {
+                        let mut vocals_path_found = String::new();
+                        if let Some(parent) = std::path::Path::new(&cached.instrumental_path).parent() {
+                            if let Some(inst_file) = std::path::Path::new(&cached.instrumental_path).file_name().and_then(|f| f.to_str()) {
+                                let mut voc_file = inst_file.to_string();
+                                if let Some(idx) = voc_file.find("_(Instrumental)_") {
+                                    voc_file = format!("{}.mp3", &voc_file[..idx]);
+                                } else if let Some(idx) = voc_file.find("_(Instrumental).mp3") {
+                                    voc_file = format!("{}.mp3", &voc_file[..idx]);
+                                }
+                                let candidate = parent.join(&voc_file);
+                                if candidate.exists() {
+                                    vocals_path_found = candidate.to_string_lossy().to_string();
+                                }
+                            }
+                        }
+
                         let segments = parse_lrc(&lrc_content);
                         let res = serde_json::json!({
                             "message": "Processing complete (Cached)",
@@ -324,6 +403,7 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
                                 "segments": segments,
                                 "lrc": lrc_content,
                                 "instrumentalUrl": cached.instrumental_path,
+                                "vocalsUrl": vocals_path_found,
                                 "title": cached.title,
                                 "artist": cached.artist
                             }
@@ -413,14 +493,49 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
         let raw_instrumental = sep_json.get("instrumental").unwrap().as_str().unwrap();
         let instrumental_path = PathBuf::from(&uploads_dir).join(raw_instrumental).to_string_lossy().to_string();
         
-        let lrc_content = std::fs::read_to_string(&lrc_path).unwrap_or_default();
+        let raw_vocals_opt = sep_json.get("vocals").and_then(|v| v.as_str());
+        let vocals_path = if let Some(v) = raw_vocals_opt { 
+            PathBuf::from(&uploads_dir).join(v).to_string_lossy().to_string() 
+        } else { 
+            mp3_path.clone() // fallback
+        };
+
+        // 3. Align ELRC
+        emit("Generating Enhanced LRC (Word-level timestamps)...");
+        let align_script = state.python_dir.join("align_elrc.py");
+        let elrc_path = format!("{}.elrc", lrc_path);
+
+        let align_output = create_command(&python_exe)
+            .arg(&align_script)
+            .arg(&vocals_path)
+            .arg(&lrc_path)
+            .arg(&elrc_path)
+            .output()
+            .await;
+            
+        if let Ok(out) = align_output {
+            if !out.status.success() {
+                println!("Word alignment failed stderr: {}", String::from_utf8_lossy(&out.stderr));
+                println!("Word alignment failed stdout: {}", String::from_utf8_lossy(&out.stdout));
+            } else {
+                println!("Word alignment success stdout: {}", String::from_utf8_lossy(&out.stdout));
+            }
+        }
+        
+        // We will read from the ELRC file if we wanted, or fallback to standard lrc
+        let mut final_lrc_path = elrc_path.clone();
+        if !std::path::Path::new(&elrc_path).exists() {
+            final_lrc_path = lrc_path.clone();
+        }
+
+        let lrc_content = std::fs::read_to_string(&final_lrc_path).unwrap_or_else(|_| std::fs::read_to_string(&lrc_path).unwrap_or_default());
         let segments = parse_lrc(&lrc_content);
         
         let song = db::CachedSong {
             video_id: video_id.clone(),
             title: title.clone(),
             artist: artist.clone(),
-            lrc_path: lrc_path.clone(),
+            lrc_path: final_lrc_path.clone(),
             instrumental_path: instrumental_path.clone(),
             missing_lyrics: false,
             timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
@@ -437,6 +552,7 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
                 "segments": segments,
                 "lrc": lrc_content,
                 "instrumentalUrl": instrumental_path,
+                "vocalsUrl": mp3_path,
                 "title": title,
                 "artist": artist
             }

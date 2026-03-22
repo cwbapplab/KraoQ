@@ -4,3 +4,4 @@ requests
 audio-separator[gpu]
 mutagen
 onnxruntime-gpu
+stable-ts

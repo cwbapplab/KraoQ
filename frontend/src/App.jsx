@@ -58,6 +58,8 @@ function App() {
     const [isReinstalling, setIsReinstalling] = useState(null); // id of dependency being reinstalled
     const [gpuStatus, setGpuStatus] = useState(null); // { status, message, torchVersion, ... }
     const [isCheckingGpu, setIsCheckingGpu] = useState(false);
+    const [audioMode, setAudioMode] = useState('instrumental'); // 'instrumental' or 'vocals'
+    const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', type: 'default', confirmText: 'Confirm', onConfirm: () => { } });
     const headerRef = useRef(null);
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
@@ -241,10 +243,25 @@ function App() {
             const currentTime = audio.currentTime;
             let newIndex = -1;
             for (let i = 0; i < lyricsData.length; i++) {
-                // Add 300ms offset to trigger transition slightly earlier for the singer
-                if (currentTime + 0.3 >= lyricsData[i].time) newIndex = i;
-                else break;
+                if (currentTime + 0.3 >= lyricsData[i].time) {
+                    newIndex = i;
+                } else {
+                    break;
+                }
             }
+
+            // Eager scroll: If current line is finished, bring the next line in evidence
+            if (newIndex >= 0 && newIndex < lyricsData.length - 1) {
+                const currentLine = lyricsData[newIndex];
+                if (currentLine.words && currentLine.words.length > 0) {
+                    const lastWord = currentLine.words[currentLine.words.length - 1];
+                    // If the last word is in the past, jump to the next line eagerly
+                    if (currentTime > lastWord.end) {
+                        newIndex += 1;
+                    }
+                }
+            }
+
             if (newIndex !== activeLineIndex) {
                 setActiveLineIndex(newIndex);
             }
@@ -590,7 +607,7 @@ function App() {
             const res = await invoke('process_yt', { videoId });
             const result = JSON.parse(res);
 
-            const parsed = parseLRC(result.data.lrc);
+            const parsed = result.data.segments || parseLRC(result.data.lrc);
             setLyricsData(parsed);
 
             setCurrentSong({
@@ -598,7 +615,8 @@ function App() {
                 artist: result.data.artist || "Unknown Artist",
                 thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                 videoId: videoId,
-                instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', ''))
+                instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
+                vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : ""
             });
 
             addToRecent({
@@ -1336,6 +1354,57 @@ function App() {
                 )}
             </AnimatePresence>
 
+            {/* CONFIRMATION MODAL */}
+            <AnimatePresence>
+                {confirmModal.isOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+                        onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                            className="bg-slate-900 border border-white/10 rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 overflow-hidden"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-xl ${confirmModal.type === 'danger' ? 'bg-red-500/20 text-red-400' : 'bg-primary/20 text-primary'}`}>
+                                    {confirmModal.type === 'danger' ? <AlertCircle size={24} /> : <CheckCircle2 size={24} />}
+                                </div>
+                                <h3 className="text-xl font-black text-white">{confirmModal.title || 'Confirm Action'}</h3>
+                            </div>
+                            <p className="text-white/60 text-sm">{confirmModal.message}</p>
+                            <div className="flex justify-end gap-3 mt-4">
+                                <button
+                                    onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+                                    className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white text-sm font-medium transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (confirmModal.onConfirm) confirmModal.onConfirm();
+                                        setConfirmModal({ ...confirmModal, isOpen: false });
+                                    }}
+                                    className={`px-4 py-2 rounded-xl text-sm font-black transition-all ${
+                                        confirmModal.type === 'danger' 
+                                        ? 'bg-red-500 hover:bg-red-600 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]' 
+                                        : 'bg-primary hover:bg-primary-hover text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]'
+                                    }`}
+                                >
+                                    {confirmModal.confirmText || 'Confirm'}
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* KARAOKE PLAYER VIEW */}
             {karaokeMode && currentSong && (
                 <div
@@ -1401,23 +1470,38 @@ function App() {
                                     </span>
                                 </div>
 
-                                {lyricsData.map((line, idx) => (
-                                    <div
-                                        key={idx}
-                                        className={`flex items-center justify-center transition-all duration-500 h-[220px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
-                                    >
+                                {lyricsData.map((line, idx) => {
+                                    const prevLine = idx > 0 ? lyricsData[idx - 1] : null;
+                                    let wordGap = 0;
+                                    const currStart = line.words && line.words.length > 0 ? line.words[0].start : (line.time || 0);
+                                    const prevEnd = prevLine && prevLine.words && prevLine.words.length > 0 ? prevLine.words[prevLine.words.length - 1].end : (prevLine ? prevLine.time : 0);
+                                    if (prevLine) {
+                                        wordGap = currStart - prevEnd;
+                                    }
+
+                                    return (
+                                        <div
+                                            key={idx}
+                                            className={`flex items-center justify-center transition-all duration-500 h-[220px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
+                                        >
                                         <span
-                                            className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500' : 'text-white'}`}
+                                            className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? '' : 'text-white'}`}
                                             style={{
                                                 fontSize: 'clamp(1.2rem, 6vw, 3.5rem)',
                                                 textShadow: idx === activeLineIndex ? '0 0 15px rgba(99,102,241,0.5)' : 'none',
-                                                WebkitTextFillColor: idx === activeLineIndex ? 'transparent' : 'white'
                                             }}
                                         >
-                                            {idx === activeLineIndex + 1 && displayNextText.includes('•') ? displayNextText : line.text}
+                                            <LyricLine 
+                                                line={line} 
+                                                isActive={idx === activeLineIndex} 
+                                                audioRef={audioRef} 
+                                                displayNextText={displayNextText}
+                                                gap={wordGap}
+                                                isNext={idx === activeLineIndex + 1}
+                                            />
                                         </span>
                                     </div>
-                                ))}
+                                )})}
                             </div>
                         </div>
                     </div>
@@ -1431,7 +1515,7 @@ function App() {
                         <div className={`grid ${!isMobile() ? 'grid-cols-[1fr,auto]' : 'grid-cols-1'} gap-x-0 items-center`}>
                             <audio
                                 ref={audioRef}
-                                src={currentSong.instrumentalUrl}
+                                src={typeof audioMode !== 'undefined' && audioMode === 'vocals' && currentSong.vocalsUrl ? currentSong.vocalsUrl : currentSong.instrumentalUrl}
                                 crossOrigin="anonymous"
                                 controls
                                 controlsList="nodownload noplaybackrate"
@@ -1448,8 +1532,21 @@ function App() {
                                 </button>
                             )}
 
-                            <div className="mt-1 text-text-muted text-[10px] uppercase tracking-widest font-bold px-2 col-span-2 opacity-50">
-                                Mode: <span className="text-accent">Instrumental</span>
+                            <div 
+                                className="mt-1 text-text-muted text-[10px] uppercase tracking-widest font-bold px-2 col-span-2 hover:opacity-100 opacity-60 cursor-pointer flex items-center gap-1 transition-all"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (currentSong && currentSong.vocalsUrl) {
+                                        const currentPos = audioRef.current ? audioRef.current.currentTime : 0;
+                                        setAudioMode(prev => prev === 'instrumental' ? 'vocals' : 'instrumental');
+                                        setTimeout(() => {
+                                            if (audioRef.current) audioRef.current.currentTime = currentPos;
+                                        }, 100);
+                                    }
+                                }}
+                            >
+                                Mode: <span className={typeof audioMode !== 'undefined' && audioMode === 'vocals' ? 'text-primary-hover font-black' : 'text-accent'}>{typeof audioMode !== 'undefined' && audioMode === 'vocals' ? 'Vocal (Original)' : 'Instrumental'}</span>
+                                {currentSong && currentSong.vocalsUrl && <span className="text-[8px] text-white/30 ml-2">(Click to Swap)</span>}
                             </div>
                         </div>
                     </div>
@@ -1705,6 +1802,120 @@ function parseLRC(lrcText) {
     });
     lyricsData.sort((a, b) => a.time - b.time);
     return lyricsData;
+}
+
+function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap }) {
+    const wordRefs = React.useRef([]);
+    const containerRef = React.useRef(null);
+    const progressBarRef = React.useRef(null);
+
+    React.useEffect(() => {
+        if (!isActive && !isNext) return;
+
+        let rafId;
+        const tick = () => {
+            const currentTime = audioRef.current ? audioRef.current.currentTime : 0;
+            
+            const isFutureActive = isActive && line.words && line.words.length > 0 && currentTime < line.words[0].start;
+
+            if ((isNext || isFutureActive) && gap > 5) {
+                const start = line.words && line.words.length > 0 ? line.words[0].start : (line.time || 0);
+                const timeUntilNext = start - currentTime;
+                if (timeUntilNext > 0 && timeUntilNext < gap) {
+                    if (containerRef.current) containerRef.current.style.display = 'block';
+                    if (progressBarRef.current) {
+                        const pct = Math.max(0, Math.min(100, (timeUntilNext / gap) * 100));
+                        progressBarRef.current.style.width = `${pct}%`;
+                    }
+                } else {
+                    if (containerRef.current) containerRef.current.style.display = 'none';
+                }
+            }
+
+            if (isActive && line.words) {
+                line.words.forEach((w, i) => {
+                    const el = wordRefs.current[i];
+                    if (!el) return;
+
+                    if (currentTime >= w.start && currentTime <= w.end) {
+                        // Active word (progressive filling)
+                        const duration = w.end - w.start;
+                        const elapsed = currentTime - w.start;
+                        const progress = Math.max(0, Math.min(100, (elapsed / duration) * 100));
+                        
+                        el.style.backgroundImage = `linear-gradient(to right, #ffffff ${progress}%, rgba(255, 255, 255, 0.4) ${progress}%)`;
+                        el.style.webkitBackgroundClip = 'text';
+                        el.style.webkitTextFillColor = 'transparent';
+                        el.style.transform = 'scale(1.05)';
+                        el.style.textShadow = '0 0 10px rgba(99, 102, 241, 0.4)';
+                    } else if (currentTime > w.end) {
+                        // Passed word
+                        el.style.backgroundImage = 'none';
+                        el.style.webkitBackgroundClip = 'unset';
+                        el.style.webkitTextFillColor = '#a5b4fc';
+                        el.style.color = '#a5b4fc'; 
+                        el.style.transform = 'scale(1.0)';
+                        el.style.textShadow = 'none';
+                    } else {
+                        // Future word
+                        el.style.backgroundImage = 'none';
+                        el.style.webkitBackgroundClip = 'unset';
+                        el.style.webkitTextFillColor = 'rgba(255, 255, 255, 0.4)';
+                        el.style.color = 'rgba(255, 255, 255, 0.4)';
+                        el.style.transform = 'scale(1.0)';
+                        el.style.textShadow = 'none';
+                    }
+                });
+            }
+
+            rafId = requestAnimationFrame(tick);
+        };
+
+        rafId = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(rafId);
+    }, [isActive, isNext, gap, line.words]);
+
+    // if (isNext && displayNextText.includes('•')) {
+    //     return displayNextText;
+    // }
+
+    if (!line.words || line.words.length === 0) {
+        return line.text;
+    }
+
+    return (
+        <div className="flex flex-col items-center justify-center">
+            {(isNext || isActive) && typeof gap !== 'undefined' && gap > 5 && (
+                <div 
+                    ref={containerRef} 
+                    className="w-44 h-1 bg-white/10 rounded-full mb-4 overflow-hidden"
+                    style={{ display: 'none' }}
+                >
+                    <div 
+                        ref={progressBarRef}
+                        className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 rounded-full transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(99,102,241,0.6)]"
+                        style={{ width: '100%' }}
+                    />
+                </div>
+            )}
+            <span className="flex flex-wrap items-center justify-center">
+                {line.words.map((w, i) => (
+                <span
+                    key={i}
+                    ref={el => wordRefs.current[i] = el}
+                    className="transition-all duration-100 ease-out"
+                    style={{ 
+                        margin: '0 5px',
+                        display: 'inline-block',
+                        color: isActive ? 'rgba(255,255,255,0.4)' : '#fff'
+                    }}
+                >
+                    {w.word}
+                </span>
+            ))}
+        </span>
+        </div>
+    );
 }
 
 export default App;
