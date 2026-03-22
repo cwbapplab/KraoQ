@@ -60,7 +60,9 @@ const convertFileSrc = (path) => {
     }
     if (!path) return "";
     const filename = path.split(/[\\/]/).pop();
-    return `/uploads/${filename}`;
+    const protocol = window.location.protocol;
+    const host = window.location.hostname;
+    return `${protocol}//${host}:1425/uploads/${filename}`;
 };
 
 function App() {
@@ -395,7 +397,8 @@ function App() {
                     if (response.ok) {
                         const data = await response.json();
                         setQueue(prev => {
-                            return data.map(item => {
+                            const qList = data.queue || [];
+                            return qList.map(item => {
                                 const existing = prev.find(p => p.videoId === item.videoId && p.deviceId === item.deviceId);
                                 return existing ? existing : { ...item, status: 'waiting' };
                             });
@@ -428,7 +431,7 @@ function App() {
 
     // Process Queue Worker
     useEffect(() => {
-        if (!isPartyMode || queue.length === 0) return;
+        if (queue.length === 0) return;
 
         const processNext = async () => {
             const nextItem = queue.find(item => item.status === 'waiting');
@@ -437,7 +440,16 @@ function App() {
             setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'processing' } : i));
 
             try {
-                const res = await invoke('process_yt', { videoId: nextItem.videoId });
+                let res;
+                if (isTauri) {
+                    res = await invoke('process_yt', { videoId: nextItem.videoId });
+                } else {
+                    const protocol = window.location.protocol;
+                    const host = window.location.hostname;
+                    const response = await fetch(`${protocol}//${host}:1425/api/process_yt?query=${encodeURIComponent(nextItem.videoId)}`);
+                    if (!response.ok) throw new Error("Failed to process");
+                    res = await response.text();
+                }
                 const result = JSON.parse(res);
 
                 // Load the song into the player - either opening it fresh OR replacing the waiting screen
@@ -450,7 +462,8 @@ function App() {
                         videoId: nextItem.videoId,
                         instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
                         vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "",
-                        singer: nextItem.singer
+                        singer: nextItem.singer,
+                        deviceId: nextItem.deviceId
                     });
                     setIsPlaying(false);
                     setIsAutoPaused(true);
@@ -458,7 +471,15 @@ function App() {
                     setIsWaitingForNextQueue(false);
                     isWaitingRef.current = false;
                     setQueue(prev => prev.filter(i => i.videoId !== nextItem.videoId));
-                    invoke('remove_from_party_queue', { videoId: nextItem.videoId }).catch(console.error);
+                    if (isTauri) {
+                        invoke('remove_from_party_queue', { videoId: nextItem.videoId, deviceId: nextItem.deviceId || "" }).catch(console.error);
+                    } else {
+                        fetch('/api/remove_queue', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ videoId: nextItem.videoId, deviceId: nextItem.deviceId || "" })
+                        }).catch(console.error);
+                    }
                 };
 
                 setKaraokeMode(currentValue => {
@@ -508,16 +529,23 @@ function App() {
                 videoId: songItem.videoId,
                 instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
                 vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "",
-                singer: songItem.singer
+                singer: songItem.singer,
+                deviceId: songItem.deviceId
             });
 
 
             setQueue(prev => prev.filter(i => i.videoId !== songItem.videoId));
             setKaraokeMode(true);
             setIsProcessing(false);
-
-            // Clear from Rust Party Queue Mutex state so singer can add again
-            await invoke('remove_from_party_queue', { videoId: songItem.videoId });
+            if (isTauri) {
+                invoke('remove_from_party_queue', { videoId: songItem.videoId, deviceId: songItem.deviceId || "" }).catch(console.error);
+            } else {
+                fetch('/api/remove_queue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ videoId: songItem.videoId, deviceId: songItem.deviceId || "" })
+                }).catch(console.error);
+            }
         } catch (e) {
 
             console.error("Queue play failed", e);
@@ -530,7 +558,7 @@ function App() {
         if (!audio) return;
 
         const handleEnded = () => {
-            if (isPartyMode) {
+            if (isPartyMode || isLockedByWeb) {
                 const nextReady = queue.find(item => item.status === 'ready');
                 if (nextReady) {
                     setNextSingerName(nextReady.singer || "Guest");
@@ -553,7 +581,7 @@ function App() {
 
         audio.addEventListener('ended', handleEnded);
         return () => audio.removeEventListener('ended', handleEnded);
-    }, [queue, isPartyMode, playFromQueue]);
+    }, [queue, isPartyMode, playFromQueue, currentSong]);
 
     // Next Singer Countdown Effect
     useEffect(() => {
@@ -2312,6 +2340,13 @@ function App() {
                     </motion.div>
                     <h1 className="text-2xl font-bold text-white tracking-tight">Display Forwarded</h1>
                     <p className="text-sm text-white/60 max-w-[320px]">This workspace is currently being controlled and viewed strictly from another remote screen.</p>
+                    
+                    {status && (
+                        <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[11px] text-slate-400">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            {status}
+                        </div>
+                    )}
                     
                     <div className="mt-4 flex flex-col items-center gap-3">
                         <div className="flex items-center gap-2 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 max-w-[280px]">

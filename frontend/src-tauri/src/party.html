@@ -54,6 +54,7 @@
             const [showSuggestions, setShowSuggestions] = useState(false);
             const [singer, setSinger] = useState(localStorage.getItem('singer') || '');
             const [liveQueue, setLiveQueue] = useState([]);
+            const [currentPlayback, setCurrentPlayback] = useState(null);
             const [deviceId] = useState(() => {
                 let id = localStorage.getItem('deviceId');
                 if (!id) {
@@ -74,7 +75,8 @@
                     try {
                         const res = await fetch('/api/queue');
                         const data = await res.json();
-                        setLiveQueue(data);
+                        setLiveQueue(data.queue || []);
+                        setCurrentPlayback(data.currentPlayback);
                     } catch (e) { console.error(e); }
                 };
                 fetchQueue();
@@ -170,6 +172,8 @@
                 } catch (e) { setStatus('Error: ' + e.message); }
             };
 
+            const nowPlaying = currentPlayback && currentPlayback.currentSong ? currentPlayback.currentSong : null;
+            const upNext = liveQueue;
 
             return html`
                 <div class="flex flex-col gap-4">
@@ -241,15 +245,31 @@
                         </div>
                     `}
 
+                    <!-- Now Playing -->
+                    ${nowPlaying && html`
+                        <div class="flex flex-col gap-2 mb-2">
+                             <div class="flex items-center gap-2 px-1">
+                                  <i data-lucide="play" class="w-4 h-4 text-emerald-400"></i>
+                                  <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-400">Now Playing</h3>
+                             </div>
+                             <div class="glass p-3 rounded-xl flex items-center justify-between shadow border-l-2 border-l-emerald-400 animate-in slide-in-from-top-1">
+                                  <div class="truncate flex-1">
+                                       <h4 class="font-weight-bold text-sm truncate text-white">${nowPlaying.title}</h4>
+                                       <p class="text-[10px] text-slate-400">Singer: <span class="text-emerald-400 font-black tracking-wide">${nowPlaying.singer}</span></p>
+                                  </div>
+                             </div>
+                        </div>
+                    `}
+
                     <!-- Live Queue -->
-                    ${liveQueue.length > 0 && html`
+                    ${upNext.length > 0 && html`
                         <div class="flex flex-col gap-2">
                              <div class="flex items-center gap-2 px-1">
                                   <i data-lucide="list-video" class="w-4 h-4 text-accent"></i>
-                                  <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Up Next (${liveQueue.length})</h3>
+                                  <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Up Next (${upNext.length})</h3>
                              </div>
                              <div class="flex flex-col gap-2">
-                                  ${liveQueue.map(item => html`
+                                  ${upNext.map(item => html`
                                       <div class="glass p-3 rounded-xl flex items-center justify-between shadow border-l-2 border-l-accent animate-in slide-in-from-top-1">
                                            <div class="truncate flex-1">
                                                 <h4 class="font-bold text-sm truncate text-white">${item.title}</h4>

@@ -232,11 +232,19 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>, force: bool) 
 
 async fn handle_get_queue(
     State(state): State<Arc<ServerState>>,
-) -> Result<Json<Vec<QueueRequest>>, StatusCode> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let app = state.app.clone();
     let app_state = app.state::<crate::AppState>();
     let q = app_state.party_queue.lock().unwrap();
-    Ok(Json(q.clone()))
+    
+    let current_playback = state.current_playback.lock().unwrap().clone();
+
+    let res_json = serde_json::json!({
+        "queue": q.clone(),
+        "currentPlayback": current_playback
+    });
+
+    Ok(Json(res_json))
 }
 
 
@@ -282,10 +290,17 @@ async fn handle_client_remove_queue(
 
 
 #[tauri::command]
-pub fn remove_from_party_queue(app: AppHandle, video_id: String) {
+pub fn remove_from_party_queue(app: AppHandle, video_id: String, device_id: String) {
+    println!("[Rust] remove_from_party_queue called with video_id: {}, device_id: {}", video_id, device_id);
     let state = app.state::<crate::AppState>();
     let mut q = state.party_queue.lock().unwrap();
-    q.retain(|item| item.video_id != video_id);
+    let old_len = q.len();
+    q.retain(|item| !(item.video_id == video_id && item.device_id == device_id));
+    println!("[Rust] Queue items retained. size: {} -> {}", old_len, q.len());
+    drop(q);
+
+    // Emit to WebSocket smartphones so they can remove it instantly over socket list update streams!
+    let _ = app.emit("party_remove_from_queue", RemoveRequest { video_id: video_id.clone(), device_id: device_id.clone() });
 }
 
 
@@ -318,7 +333,13 @@ pub async fn start_server(app: AppHandle) -> Result<u16, String> {
         .route("/api/queue", get(handle_get_queue).post(handle_queue))
         .route("/api/remove_queue", post(handle_client_remove_queue))
         .with_state(shared_state.clone())
-        .nest_service("/uploads", tower_http::services::ServeDir::new(uploads_dir));
+        .nest_service("/uploads", tower_http::services::ServeDir::new(uploads_dir))
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any)
+        );
 
     app.manage(shared_state);
 
