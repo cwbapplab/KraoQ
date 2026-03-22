@@ -11,6 +11,17 @@ export default defineConfig({
         host: true,
         watch: {
             ignored: ["**/src-tauri/**", "**/models/**", "**/uploads/**"]
+        },
+        proxy: {
+            '/api': {
+                target: 'http://127.0.0.1:1425',
+                changeOrigin: true,
+                ws: true
+            },
+            '/uploads': {
+                target: 'http://127.0.0.1:1425',
+                changeOrigin: true
+            }
         }
     },
     envPrefix: ['VITE_', 'TAURI_'],

@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw, Cpu, Monitor } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
-import { invoke } from '@tauri-apps/api/core';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { convertFileSrc as tauriConvertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -20,8 +20,138 @@ const isMobile = () => {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 };
 
+const isTauri = typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__;
+
+const invoke = async (cmd, args = {}) => {
+    if (isTauri) {
+        return tauriInvoke(cmd, args);
+    }
+    try {
+        if (cmd === 'search') {
+            const response = await fetch(`/api/search?query=${encodeURIComponent(args.query || '')}`);
+            const data = await response.json();
+            return JSON.stringify(data);
+        } else if (cmd === 'suggestions') {
+            const response = await fetch(`/api/suggestions?query=${encodeURIComponent(args.query || '')}`);
+            const data = await response.json();
+            return JSON.stringify(data);
+        } else if (cmd === 'process_yt') {
+            const response = await fetch(`/api/process_yt?query=${encodeURIComponent(args.videoId || '')}`);
+            const data = await response.json();
+            return JSON.stringify(data);
+        } else {
+            const response = await fetch(`/invoke`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cmd, args })
+            });
+            const text = await response.text();
+            return text;
+        }
+    } catch (e) {
+        console.error(`Invoke error for ${cmd}:`, e);
+        throw e;
+    }
+};
+
+const convertFileSrc = (path) => {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+        return tauriConvertFileSrc(path);
+    }
+    if (!path) return "";
+    const filename = path.split(/[\\/]/).pop();
+    return `/uploads/${filename}`;
+};
+
 function App() {
     const [setupStatus, setSetupStatus] = useState("Checking dependencies...");
+    const [isLockedByWeb, setIsLockedByWeb] = useState(false);
+    const forceReconnectRef = useRef(false);
+    const [reconnectTrigger, setReconnectTrigger] = useState(0);
+    const [resumeTime, setResumeTime] = useState(0);
+    const wsRef = useRef(null);
+
+    useEffect(() => {
+        if (!isTauri) {
+            let ws;
+            const timer = setTimeout(() => {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const host = window.location.hostname;
+                const url = `${protocol}//${host}:1425/api/ws${forceReconnectRef.current ? '?force=true' : ''}`;
+                ws = new WebSocket(url);
+                wsRef.current = ws;
+                
+                ws.onopen = () => {
+                    setIsLockedByWeb(false);
+                    forceReconnectRef.current = false;
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                         const data = JSON.parse(event.data);
+                         if (data.type === 'error' && data.message === 'disconnected_by_force') {
+                              if (audioRef.current) audioRef.current.pause();
+                              setKaraokeMode(false);
+                              setCurrentSong(null);
+                              setIsLockedByWeb(true);
+                              alert("Disconnected: Display taken over by another screen.");
+                         } else if (data.type === 'sync_state') {
+                              const payload = data.payload;
+                              if (payload.currentSong) {
+                                   setLyricsData(payload.lyricsData || []); // Load lyrics directly from sync!
+                                   setCurrentSong(payload.currentSong);
+                                   setKaraokeMode(payload.isKaraokeMode);
+                                   setResumeTime(payload.currentTime);
+                                   setIsAutoPaused(!payload.isPlaying);
+                              }
+                         } else if (data.type === 'error' && data.message === 'locked') {
+                              setIsLockedByWeb(true);
+                         } else if (data.type === 'add') {
+                              const payload = data.payload;
+                              setQueue(prev => {
+                                   if (prev.some(item => item.videoId === payload.videoId && item.deviceId === payload.deviceId)) return prev;
+                                   return [...prev, { ...payload, status: 'waiting' }];
+                              });
+                         } else if (data.type === 'remove') {
+                              const payload = data.payload;
+                              setQueue(prev => prev.filter(item => !(item.videoId === payload.videoId && item.deviceId === payload.deviceId)));
+                         }
+                    } catch (e) {
+                         console.error("WS error parsing", e);
+                    }
+                };
+            }, 100);
+
+            return () => {
+                clearTimeout(timer);
+                if (ws) ws.close();
+            };
+        }
+
+        let unlistenLock;
+        let unlistenForce;
+        const listenWebStatus = async () => {
+             unlistenLock = await listen('web_viewer_status', (event) => {
+                 setIsLockedByWeb(!!event.payload);
+             });
+             unlistenForce = await listen('force_takeover_happened', () => {
+                 if (audioRef.current) audioRef.current.pause();
+                 setKaraokeMode(false);
+                 setCurrentSong(null);
+             });
+        };
+        listenWebStatus();
+        return () => {
+             if (unlistenLock && typeof unlistenLock === 'function') unlistenLock();
+             if (unlistenForce && typeof unlistenForce === 'function') unlistenForce();
+        }
+    }, [reconnectTrigger]);
+
+    const handleTauriTakeover = async () => {
+        await tauriInvoke('force_takeover');
+        setIsLockedByWeb(false);
+    };
+
     const [setupSteps, setSetupSteps] = useState([
         { id: 'python', label: 'Python Runtime', status: 'pending', progress: 0 },
         { id: 'ffmpeg', label: 'FFmpeg Engine', status: 'pending', progress: 0 },
@@ -122,6 +252,10 @@ function App() {
 
         let unlisten;
         const initApp = async () => {
+            if (!isTauri) {
+                setIsReady(true);
+                return;
+            }
             try {
                 // Listen for granular step updates
                 const unlistenStep = await listen('setup_step', (event) => {
@@ -158,6 +292,7 @@ function App() {
 
     // Listen to processing status updates
     useEffect(() => {
+        if (!isTauri) return;
         let unlistenStatus;
         const initStatusListener = async () => {
             unlistenStatus = await listen('process_status', (event) => {
@@ -173,6 +308,7 @@ function App() {
     }, []);
 
     const loadConfig = async () => {
+        if (!isTauri) return;
         try {
             const config = await invoke('get_app_config');
             setAppConfig(config);
@@ -231,6 +367,11 @@ function App() {
     };
 
     const loadPartyUrl = useCallback(async () => {
+        if (!isTauri) {
+            const host = window.location.hostname;
+            setPartyUrl(`http://${host}:1425`);
+            return;
+        }
         try {
             const url = await invoke('get_party_url');
             setPartyUrl(url);
@@ -247,6 +388,27 @@ function App() {
 
     // Listen for queue updates from local webserver
     useEffect(() => {
+        if (!isTauri) {
+            const pollQueue = async () => {
+                try {
+                    const response = await fetch('/api/queue');
+                    if (response.ok) {
+                        const data = await response.json();
+                        setQueue(prev => {
+                            return data.map(item => {
+                                const existing = prev.find(p => p.videoId === item.videoId && p.deviceId === item.deviceId);
+                                return existing ? existing : { ...item, status: 'waiting' };
+                            });
+                        });
+                    }
+                } catch (e) {
+                    console.error("Polling queue error", e);
+                }
+            };
+            pollQueue();
+            return;
+        }
+
         let unlistenParty;
         const initPartyListener = async () => {
             unlistenParty = await listen('party_add_to_queue', (event) => {
@@ -434,6 +596,7 @@ function App() {
         }
     }, []);
 
+    const lastSyncRef = useRef(0);
     // Sync Lyrics
     useEffect(() => {
         const audio = audioRef.current;
@@ -441,6 +604,23 @@ function App() {
 
         const handleTimeUpdate = () => {
             const currentTime = audio.currentTime;
+            
+            if (Date.now() - lastSyncRef.current > 1000) {
+                 lastSyncRef.current = Date.now();
+                 if (!isTauri && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                      wsRef.current.send(JSON.stringify({
+                           type: 'sync_state',
+                           payload: {
+                                currentSong,
+                                currentTime,
+                                isKaraokeMode: karaokeMode,
+                                isPlaying: !audio.paused,
+                                lyricsData: lyricsData
+                           }
+                      }));
+                 }
+            }
+
             let newIndex = -1;
             for (let i = 0; i < lyricsData.length; i++) {
                 if (currentTime + 0.3 >= lyricsData[i].time) {
@@ -476,6 +656,24 @@ function App() {
         audio.addEventListener('timeupdate', handleTimeUpdate);
         return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
     }, [lyricsData, activeLineIndex, karaokeMode, currentSong]);
+
+    // Handle resume time for takeover
+    useEffect(() => {
+        if (currentSong && resumeTime > 0 && audioRef.current) {
+             const audio = audioRef.current;
+             const playFn = () => {
+                  audio.currentTime = resumeTime;
+                  setResumeTime(0); // clear
+                  audio.play().catch(console.error);
+             };
+             
+             if (audio.readyState >= 2) {
+                  playFn();
+             } else {
+                  audio.addEventListener('canplay', playFn, { once: true });
+             }
+        }
+    }, [currentSong, resumeTime]);
 
     // Live Suggestions
     useEffect(() => {
@@ -1143,6 +1341,7 @@ function App() {
                         >
                             <Settings size={20} />
                         </motion.button>
+
                     </div>
 
                 </header>
@@ -1781,7 +1980,7 @@ function App() {
                         <div className={`grid ${!isMobile() ? 'grid-cols-[1fr,auto]' : 'grid-cols-1'} gap-x-0 items-center`}>
                             <audio
                                 ref={audioRef}
-                                src={typeof audioMode !== 'undefined' && audioMode === 'vocals' && currentSong.vocalsUrl ? currentSong.vocalsUrl : currentSong.instrumentalUrl}
+                                src={currentSong ? (typeof audioMode !== 'undefined' && audioMode === 'vocals' && currentSong.vocalsUrl ? currentSong.vocalsUrl : currentSong.instrumentalUrl) : ""}
                                 crossOrigin="anonymous"
                                 controls
                                 controlsList="nodownload noplaybackrate"
@@ -1872,24 +2071,26 @@ function App() {
                             <div className="flex-1 overflow-y-auto stylized-scrollbar p-8 space-y-10">
                                 {/* PERFORMANCE SECTION */}
                                 <section className="space-y-4">
-                                    <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em]">Performance</h3>
-                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
-                                        <div className="flex items-center gap-4">
-                                            <div className={`p-2.5 rounded-xl ${appConfig.gpuEnabled ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/20'}`}>
-                                                <Zap size={20} fill={appConfig.gpuEnabled ? 'currentColor' : 'none'} />
+                                    {isTauri && <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em]">Performance</h3>}
+                                    {isTauri && (
+                                        <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                                            <div className="flex items-center gap-4">
+                                                <div className={`p-2.5 rounded-xl ${appConfig.gpuEnabled ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/20'}`}>
+                                                    <Zap size={20} fill={appConfig.gpuEnabled ? 'currentColor' : 'none'} />
+                                                </div>
+                                                <div>
+                                                    <p className="text-white font-bold text-sm">GPU Acceleration</p>
+                                                    <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">Uses NVIDIA CUDA to speed up vocal separation significantly.</p>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <p className="text-white font-bold text-sm">GPU Acceleration</p>
-                                                <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">Uses NVIDIA CUDA to speed up vocal separation significantly.</p>
-                                            </div>
+                                            <button
+                                                onClick={() => updateConfig({ ...appConfig, gpuEnabled: !appConfig.gpuEnabled })}
+                                                className={`w-12 h-6 rounded-full transition-all relative ${appConfig.gpuEnabled ? 'bg-primary' : 'bg-white/10'}`}
+                                            >
+                                                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
+                                            </button>
                                         </div>
-                                        <button
-                                            onClick={() => updateConfig({ ...appConfig, gpuEnabled: !appConfig.gpuEnabled })}
-                                            className={`w-12 h-6 rounded-full transition-all relative ${appConfig.gpuEnabled ? 'bg-primary' : 'bg-white/10'}`}
-                                        >
-                                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
-                                        </button>
-                                    </div>
+                                    )}
 
                                     {/* KARAOKE SECTION */}
                                     <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Karaoke</h3>
@@ -1918,157 +2119,161 @@ function App() {
                                             </button>
                                         </div>
                                     </div>
-
                                     {/* GPU STATUS CARD */}
-                                    <div className={`mt-4 rounded-2xl border p-4 transition-all ${isCheckingGpu ? 'bg-white/5 border-white/5' :
-                                        gpuStatus?.status === 'ok' ? 'bg-emerald-500/10 border-emerald-500/20' :
-                                            gpuStatus?.status === 'degraded' ? 'bg-amber-500/10 border-amber-500/20' :
-                                                'bg-red-500/10 border-red-500/20'
-                                        }`}>
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="flex items-start gap-3 min-w-0">
-                                                <div className={`p-2 rounded-xl shrink-0 ${isCheckingGpu ? 'bg-white/10 text-white/40' :
-                                                    gpuStatus?.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                        gpuStatus?.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
-                                                            'bg-red-500/20 text-red-400'
-                                                    }`}>
-                                                    {isCheckingGpu ? <Loader2 size={18} className="animate-spin" /> : <Monitor size={18} />}
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <p className="text-white font-bold text-xs">GPU Status</p>
-                                                        {!isCheckingGpu && gpuStatus && (
-                                                            <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md ${gpuStatus.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                                gpuStatus.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
-                                                                    'bg-red-500/20 text-red-400'
-                                                                }`}>
-                                                                {gpuStatus.status === 'ok' ? 'Active' : gpuStatus.status === 'degraded' ? 'Degraded' : 'CPU Only'}
-                                                            </span>
-                                                        )}
+                                    {isTauri && (
+                                        <div className={`mt-4 rounded-2xl border p-4 transition-all ${isCheckingGpu ? 'bg-white/5 border-white/5' :
+                                            gpuStatus?.status === 'ok' ? 'bg-emerald-500/10 border-emerald-500/20' :
+                                                gpuStatus?.status === 'degraded' ? 'bg-amber-500/10 border-amber-500/20' :
+                                                    'bg-red-500/10 border-red-500/20'
+                                            }`}>
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex items-start gap-3 min-w-0">
+                                                    <div className={`p-2 rounded-xl shrink-0 ${isCheckingGpu ? 'bg-white/10 text-white/40' :
+                                                        gpuStatus?.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                            gpuStatus?.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
+                                                                'bg-red-500/20 text-red-400'
+                                                        }`}>
+                                                        {isCheckingGpu ? <Loader2 size={18} className="animate-spin" /> : <Monitor size={18} />}
                                                     </div>
-                                                    {isCheckingGpu ? (
-                                                        <p className="text-white/30 text-[10px]">Checking GPU environment...</p>
-                                                    ) : gpuStatus ? (
-                                                        <div className="space-y-1.5">
-                                                            <p className="text-white/50 text-[10px] leading-relaxed">{gpuStatus.message}</p>
-                                                            <div className="flex flex-wrap gap-x-4 gap-y-1">
-                                                                <span className="text-[9px] text-white/30">
-                                                                    <span className="text-white/50 font-semibold">Torch:</span> {gpuStatus.torchVersion}
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <p className="text-white font-bold text-xs">GPU Status</p>
+                                                            {!isCheckingGpu && gpuStatus && (
+                                                                <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md ${gpuStatus.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                                    gpuStatus.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
+                                                                        'bg-red-500/20 text-red-400'
+                                                                    }`}>
+                                                                    {gpuStatus.status === 'ok' ? 'Active' : gpuStatus.status === 'degraded' ? 'Degraded' : 'CPU Only'}
                                                                 </span>
-                                                                {gpuStatus.torchCudaVersion && (
-                                                                    <span className="text-[9px] text-white/30">
-                                                                        <span className="text-white/50 font-semibold">CUDA:</span> {gpuStatus.torchCudaVersion}
-                                                                    </span>
-                                                                )}
-                                                                {gpuStatus.cudaDeviceName && (
-                                                                    <span className="text-[9px] text-white/30">
-                                                                        <span className="text-white/50 font-semibold">GPU:</span> {gpuStatus.cudaDeviceName}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            {gpuStatus.onnxProviders?.length > 0 && (
-                                                                <div className="flex flex-wrap gap-1 mt-1">
-                                                                    {gpuStatus.onnxProviders.map(p => (
-                                                                        <span key={p} className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${p.includes('CUDA') ? 'bg-emerald-500/15 text-emerald-400/80' :
-                                                                            p.includes('Tensorrt') ? 'bg-blue-500/15 text-blue-400/80' :
-                                                                                p.includes('Dml') ? 'bg-purple-500/15 text-purple-400/80' :
-                                                                                    'bg-white/5 text-white/30'
-                                                                            }`}>{p.replace('ExecutionProvider', '')}</span>
-                                                                    ))}
-                                                                </div>
                                                             )}
                                                         </div>
-                                                    ) : null}
+                                                        {isCheckingGpu ? (
+                                                            <p className="text-white/30 text-[10px]">Checking GPU environment...</p>
+                                                        ) : gpuStatus ? (
+                                                            <div className="space-y-1.5">
+                                                                <p className="text-white/50 text-[10px] leading-relaxed">{gpuStatus.message}</p>
+                                                                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                                                    <span className="text-[9px] text-white/30">
+                                                                        <span className="text-white/50 font-semibold">Torch:</span> {gpuStatus.torchVersion}
+                                                                    </span>
+                                                                    {gpuStatus.torchCudaVersion && (
+                                                                        <span className="text-[9px] text-white/30">
+                                                                            <span className="text-white/50 font-semibold">CUDA:</span> {gpuStatus.torchCudaVersion}
+                                                                        </span>
+                                                                    )}
+                                                                    {gpuStatus.cudaDeviceName && (
+                                                                        <span className="text-[9px] text-white/30">
+                                                                            <span className="text-white/50 font-semibold">GPU:</span> {gpuStatus.cudaDeviceName}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                {gpuStatus.onnxProviders?.length > 0 && (
+                                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                                        {gpuStatus.onnxProviders.map(p => (
+                                                                            <span key={p} className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${p.includes('CUDA') ? 'bg-emerald-500/15 text-emerald-400/80' :
+                                                                                p.includes('Tensorrt') ? 'bg-blue-500/15 text-blue-400/80' :
+                                                                                    p.includes('Dml') ? 'bg-purple-500/15 text-purple-400/80' :
+                                                                                        'bg-white/5 text-white/30'
+                                                                                }`}>{p.replace('ExecutionProvider', '')}</span>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
                                                 </div>
+                                                {!isCheckingGpu && (
+                                                    <button
+                                                        onClick={checkGpuStatus}
+                                                        className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-all shrink-0"
+                                                        title="Re-check GPU status"
+                                                    >
+                                                        <RefreshCw size={12} />
+                                                    </button>
+                                                )}
                                             </div>
-                                            {!isCheckingGpu && (
-                                                <button
-                                                    onClick={checkGpuStatus}
-                                                    className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-all shrink-0"
-                                                    title="Re-check GPU status"
-                                                >
-                                                    <RefreshCw size={12} />
-                                                </button>
-                                            )}
                                         </div>
-                                    </div>
+                                    )}
                                 </section>
 
                                 {/* DEPENDENCIES SECTION */}
-                                <section className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em]">Manage Dependencies</h3>
-                                    </div>
+                                {isTauri && (
+                                    <section className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em]">Manage Dependencies</h3>
+                                        </div>
 
-                                    <div className="space-y-2">
-                                        {[
-                                            { id: 'python', key: 'pythonVersion', label: 'Python Engine', desc: 'Core runtime for AI processing' },
-                                            { id: 'ffmpeg', key: 'ffmpegVersion', label: 'FFmpeg Core', desc: 'Audio conversion and encoding' },
-                                            { id: 'models', key: null, label: 'AI Vocal Model', desc: 'Neural network weight files' },
-                                            { id: 'pip', key: null, label: 'Pip Modules', desc: 'Required Python libraries' },
-                                            { id: 'gpu', key: 'torchVersion', label: 'GPU Toolkit', desc: 'NVIDIA CUDA & cuDNN drivers' }
-                                        ].map((dep) => (
-                                            <div key={dep.id} className="group bg-white/5 border border-white/5 rounded-2xl p-4 space-y-4 hover:bg-white/[0.07] transition-all">
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex flex-col">
-                                                        <p className="text-white font-bold text-sm">{dep.label}</p>
-                                                        <p className="text-white/30 text-[10px]">{dep.desc}</p>
-                                                    </div>
-                                                    <button
-                                                        disabled={isReinstalling !== null}
-                                                        onClick={() => handleReinstall(dep.id)}
-                                                        className={`
-                                                            flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
-                                                            ${isReinstalling === dep.id
-                                                                ? 'bg-primary text-white cursor-wait'
-                                                                : 'bg-white/5 text-white/40 hover:bg-white/20 hover:text-white'
-                                                            }
-                                                            ${isReinstalling !== null && isReinstalling !== dep.id ? 'opacity-30' : ''}
-                                                        `}
-                                                    >
-                                                        {isReinstalling === dep.id ? (
-                                                            <Loader2 size={12} className="animate-spin" />
-                                                        ) : (
-                                                            <RefreshCw size={12} />
-                                                        )}
-                                                        {isReinstalling === dep.id ? 'Installing...' : 'Re-install'}
-                                                    </button>
-                                                </div>
-
-                                                {dep.key && (
-                                                    <div className="flex items-center gap-4 pt-2 border-t border-white/5">
-                                                        <div className="flex-1 flex flex-col gap-1.5">
-                                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Version</p>
-                                                            <select
-                                                                value={appConfig[dep.key]}
-                                                                onChange={(e) => updateConfig({ ...appConfig, [dep.key]: e.target.value })}
-                                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
-                                                            >
-                                                                {AVAILABLE_VERSIONS[dep.key].map(v => (
-                                                                    <option key={v} value={v} className="bg-slate-900">{v}</option>
-                                                                ))}
-                                                            </select>
+                                        <div className="space-y-2">
+                                            {[
+                                                { id: 'python', key: 'pythonVersion', label: 'Python Engine', desc: 'Core runtime for AI processing' },
+                                                { id: 'ffmpeg', key: 'ffmpegVersion', label: 'FFmpeg Core', desc: 'Audio conversion and encoding' },
+                                                { id: 'models', key: null, label: 'AI Vocal Model', desc: 'Neural network weight files' },
+                                                { id: 'pip', key: null, label: 'Pip Modules', desc: 'Required Python libraries' },
+                                                { id: 'gpu', key: 'torchVersion', label: 'GPU Toolkit', desc: 'NVIDIA CUDA & cuDNN drivers' }
+                                            ].map((dep) => (
+                                                <div key={dep.id} className="group bg-white/5 border border-white/5 rounded-2xl p-4 space-y-4 hover:bg-white/[0.07] transition-all">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex flex-col">
+                                                            <p className="text-white font-bold text-sm">{dep.label}</p>
+                                                            <p className="text-white/30 text-[10px]">{dep.desc}</p>
                                                         </div>
-                                                        {dep.id === 'gpu' && (
+                                                        <button
+                                                            disabled={isReinstalling !== null}
+                                                            onClick={() => handleReinstall(dep.id)}
+                                                            className={`
+                                                                flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
+                                                                ${isReinstalling === dep.id
+                                                                    ? 'bg-primary text-white cursor-wait'
+                                                                    : 'bg-white/5 text-white/40 hover:bg-white/20 hover:text-white'
+                                                                }
+                                                                ${isReinstalling !== null && isReinstalling !== dep.id ? 'opacity-30' : ''}
+                                                            `}
+                                                         Lark
+                                                        >
+                                                            {isReinstalling === dep.id ? (
+                                                                <Loader2 size={12} className="animate-spin" />
+                                                            ) : (
+                                                                <RefreshCw size={12} />
+                                                            )}
+                                                            {isReinstalling === dep.id ? 'Installing...' : 'Re-install'}
+                                                        </button>
+                                                    </div>
+
+                                                    {dep.key && (
+                                                        <div className="flex items-center gap-4 pt-2 border-t border-white/5">
                                                             <div className="flex-1 flex flex-col gap-1.5">
-                                                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">CUDA</p>
+                                                                <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Version</p>
                                                                 <select
-                                                                    value={appConfig.cudaVersion}
-                                                                    onChange={(e) => updateConfig({ ...appConfig, cudaVersion: e.target.value })}
+                                                                    value={appConfig[dep.key]}
+                                                                    onChange={(e) => updateConfig({ ...appConfig, [dep.key]: e.target.value })}
                                                                     className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
                                                                 >
-                                                                    {AVAILABLE_VERSIONS.cudaVersion.map(v => (
+                                                                    {AVAILABLE_VERSIONS[dep.key].map(v => (
                                                                         <option key={v} value={v} className="bg-slate-900">{v}</option>
                                                                     ))}
                                                                 </select>
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </section>
+                                                            {dep.id === 'gpu' && (
+                                                                <div className="flex-1 flex flex-col gap-1.5">
+                                                                    <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">CUDA</p>
+                                                                    <select
+                                                                        value={appConfig.cudaVersion}
+                                                                        onChange={(e) => updateConfig({ ...appConfig, cudaVersion: e.target.value })}
+                                                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                                                    >
+                                                                        {AVAILABLE_VERSIONS.cudaVersion.map(v => (
+                                                                            <option key={v} value={v} className="bg-slate-900">{v}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
                             </div>
 
                             <div className="p-8 border-t border-white/5 bg-white/[0.02]">
@@ -2088,6 +2293,46 @@ function App() {
                     <p className="text-[10px] font-bold text-white/90 text-center tracking-tight">Scan to Add Songs</p>
                     <p className="text-[8px] text-white/40 truncate w-full text-center hover:text-white transition-colors cursor-pointer" onClick={() => navigator.clipboard.writeText(partyUrl)}>{partyUrl.replace('http://', '')}</p>
                 </div>
+            )}
+
+            {/* Full Screen Lock Overlay */}
+            {isLockedByWeb && (
+                <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 1 }}
+                    className="fixed inset-0 z-[10000] bg-slate-950/95 backdrop-blur-3xl flex flex-col items-center justify-center gap-4 text-center p-8"
+                >
+                    <motion.div
+                        animate={{ scale: [1, 1.05, 1] }}
+                        transition={{ repeat: Infinity, duration: 2 }}
+                        className="p-4 rounded-full bg-indigo-500/20 text-indigo-400"
+                    >
+                        <Monitor size={48} />
+                    </motion.div>
+                    <h1 className="text-2xl font-bold text-white tracking-tight">Display Forwarded</h1>
+                    <p className="text-sm text-white/60 max-w-[320px]">This workspace is currently being controlled and viewed strictly from another remote screen.</p>
+                    
+                    <div className="mt-4 flex flex-col items-center gap-3">
+                        <div className="flex items-center gap-2 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 max-w-[280px]">
+                            <AlertCircle className="text-amber-400 shrink-0" size={16} />
+                            <p className="text-[10px] text-amber-300 text-left leading-snug">Disconnection risk! Taking over will boot other viewers and might desynchronize backends state.</p>
+                        </div>
+                        <button
+                            onClick={isTauri ? handleTauriTakeover : () => {
+                                 if (wsRef.current) wsRef.current.close();
+                                 forceReconnectRef.current = true;
+                                 setReconnectTrigger(prev => prev + 1);
+                                 setIsLockedByWeb(false);
+                            }}
+                            className="px-5 py-2.5 rounded-2xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-widest shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
+                        >
+                            <RefreshCw size={14} className={forceReconnectRef.current ? "animate-spin" : ""} /> Force take over
+                        </button>
+                    </div>
+
+                    <p className="text-[11px] text-white/30 uppercase tracking-[0.2em] mt-2">Connection updates live...</p>
+                </motion.div>
             )}
         </div>
 

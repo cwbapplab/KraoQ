@@ -680,7 +680,8 @@ pub fn run() {
             check_gpu_status,
             reinstall_dependency,
             server::get_party_url,
-            server::remove_from_party_queue
+            server::remove_from_party_queue,
+            server::force_takeover
 
         ])
         .run(tauri::generate_context!())
