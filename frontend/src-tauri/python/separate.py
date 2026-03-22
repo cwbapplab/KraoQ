@@ -56,13 +56,28 @@ ort.set_default_logger_severity(0)
 
 from audio_separator.separator import Separator
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+log_lock = threading.Lock()
+
+def log_safe(msg):
+    logging.info(msg)
+    try:
+        debug_file = os.path.join(output_dir_arg, "gpu_debug.txt")
+        with log_lock:
+            with open(debug_file, "a", encoding="utf-8") as f:
+                f.write(str(msg) + "\n")
+    except:
+        pass
+
 def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", result_file=None):
     if not result_file:
         result_file = os.path.join(output_dir, "separate_result.json")
     try:
-        log(f"--- Starting Separation with audio-separator ---")
-        log(f"Input: {audio_path}")
-        log(f"Model: {model_name}")
+        log_safe(f"--- Starting Parallel Separation with audio-separator ---")
+        log_safe(f"Input: {audio_path}")
+        log_safe(f"Model: {model_name}")
         
         app_data = os.environ.get('APP_DATA_DIR', os.path.dirname(__file__))
         uvr_model_dir = os.path.join(app_data, "models")
@@ -70,108 +85,134 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
         if not os.path.exists(uvr_model_dir):
             uvr_model_dir = os.path.join(output_dir, 'models')
             os.makedirs(uvr_model_dir, exist_ok=True)
-            log(f"Using local models dir: {uvr_model_dir}")
-
-        log(f"Model Dir: {uvr_model_dir}")
+            log_safe(f"Using local models dir: {uvr_model_dir}")
 
         gpu_enabled = os.environ.get("GPU_ENABLED", "1") == "1"
-        log(f"GPU Enabled setting: {gpu_enabled}")
+        log_safe(f"GPU Enabled setting: {gpu_enabled}")
 
         if gpu_enabled:
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-            log("Set CUDA_VISIBLE_DEVICES to 0")
         else:
             os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-            log("GPU Disabled. Set CUDA_VISIBLE_DEVICES to -1")
 
         bin_dir = os.path.join(app_data, "bin")
         if os.path.exists(bin_dir) and bin_dir not in os.environ['PATH']:
             os.environ['PATH'] = bin_dir + os.pathsep + os.environ['PATH']
-            log("Added bin dir to PATH for FFmpeg")
 
-        # --- GPU ENFORCEMENT ---
-        # The Separator class determines GPU usage internally by checking
-        # torch.cuda.is_available(). If PyTorch was installed as CPU-only,
-        # it returns False and the Separator falls back to CPU for BOTH 
-        # PyTorch and ONNX Runtime — even when onnxruntime-gpu is installed
-        # and CUDAExecutionProvider is available.
-        #
-        # To fix this, we monkey-patch the Separator's device setup AFTER
-        # construction so that ONNX Runtime uses CUDA when available,
-        # regardless of the PyTorch build.
+        audio_base = os.path.splitext(os.path.basename(audio_path))[0]
 
-        separator = Separator(
-            log_level=logging.INFO, 
-            model_file_dir=uvr_model_dir,
-            output_dir=output_dir,
-            output_format='mp3'        
-        )
+        def run_single_separation(invert_spec, suffix):
+            log_safe(f"Starting run for {suffix} (invert_using_spec={invert_spec})...")
+            
+            # Create a separate instance for thread safety
+            sep = Separator(
+                log_level=logging.INFO, 
+                model_file_dir=uvr_model_dir,
+                output_dir=output_dir,
+                output_format='mp3',
+                invert_using_spec=invert_spec
+            )
 
-        if gpu_enabled:
-            available_providers = ort.get_available_providers()
-            log(f"ORT Available Providers: {available_providers}")
-
-            if 'CUDAExecutionProvider' in available_providers:
-                log("CUDA provider available — forcing ONNX to use CUDAExecutionProvider")
-                separator.onnx_execution_provider = [
-                    ("CUDAExecutionProvider", {"device_id": 0}),
-                    "CPUExecutionProvider"
-                ]
-                # Also ensure torch device is set to CUDA if possible
-                import torch
-                if torch.cuda.is_available():
-                    separator.torch_device = torch.device("cuda")
-                    log("PyTorch CUDA is available — torch_device set to cuda")
+            # Apply GPU patch to the instance
+            if gpu_enabled:
+                available_providers = ort.get_available_providers()
+                if 'CUDAExecutionProvider' in available_providers:
+                    sep.onnx_execution_provider = [
+                        ("CUDAExecutionProvider", {"device_id": 0}),
+                        "CPUExecutionProvider"
+                    ]
+                    import torch
+                    if torch.cuda.is_available():
+                        sep.torch_device = torch.device("cuda")
+                elif 'DmlExecutionProvider' in available_providers:
+                    sep.onnx_execution_provider = ["DmlExecutionProvider", "CPUExecutionProvider"]
                 else:
-                    log("PyTorch CUDA NOT available — torch_device stays CPU, but ONNX will use CUDA")
-            elif 'DmlExecutionProvider' in available_providers:
-                log("DirectML provider available — forcing ONNX to use DmlExecutionProvider")
-                separator.onnx_execution_provider = ["DmlExecutionProvider", "CPUExecutionProvider"]
+                    sep.onnx_execution_provider = ["CPUExecutionProvider"]
             else:
-                log("WARNING: No GPU execution provider found in ONNX Runtime!")
-                log(f"Only available: {available_providers}")
-        else:
-            log("GPU disabled by user setting. Using CPU only.")
-            separator.onnx_execution_provider = ["CPUExecutionProvider"]
-            import torch
-            separator.torch_device = torch.device("cpu")
+                sep.onnx_execution_provider = ["CPUExecutionProvider"]
+                import torch
+                sep.torch_device = torch.device("cpu")
 
-        log(f"Final onnx_execution_provider: {separator.onnx_execution_provider}")
-        log(f"Final torch_device: {separator.torch_device}")
+            sep.load_model(model_filename=model_name)
+            
+            custom_names = {
+                "instrumental": f"{audio_base}_inst_{suffix}",
+                "vocals": f"{audio_base}_voc_{suffix}"
+            }
+            
+            log_safe(f"Running separation for {suffix}...")
+            output_files = sep.separate(audio_path, custom_output_names=custom_names)
+            log_safe(f"Run {suffix} finished. Output files: {output_files}")
+            
+            inst_found = None
+            voc_found = None
+            for f in output_files:
+                f_basename = os.path.basename(f)
+                if f"_inst_{suffix}" in f_basename:
+                    inst_found = f_basename
+                if f"_voc_{suffix}" in f_basename:
+                    voc_found = f_basename
 
-        log(f"Loading model {model_name}...")
-        separator.load_model(model_filename=model_name)
-        
-        log("Model loaded successfully.")
+            # Fallback if not found in list
+            if not inst_found:
+                inst_found = f"{audio_base}_inst_{suffix}.mp3"
+            if not voc_found:
+                voc_found = f"{audio_base}_voc_{suffix}.mp3"
+                
+            return {
+                "instrumental": os.path.join(output_dir, inst_found),
+                "vocals": os.path.join(output_dir, voc_found),
+                "files": output_files
+            }
 
-        log("Running separation...")
-        output_files = separator.separate(audio_path)
-        
-        log(f"Separation finished. Output files: {output_files}")
-        
-        instrumental = None
-        vocals = None
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            # Future 1: Standard (optimistic for instrumental)
+            fut_inst = executor.submit(run_single_separation, False, "inst")
+            # Future 2: Spec Invert (optimized for vocals)
+            fut_voc = executor.submit(run_single_separation, True, "voc")
 
-        for f in output_files:
-            f_lower = f.lower()
-            if "instrumental" in f_lower:
-                instrumental = f
-            if "vocals" in f_lower:
-                vocals = f
-        
+            res_inst = fut_inst.result()
+            res_voc = fut_voc.result()
+
+        # Combine results:
+        # Instrumental from standard run, Vocals from spec invert run
+        inst_file = res_inst["instrumental"]
+        final_inst = os.path.join(output_dir, f"{audio_base}_(Instrumental).mp3")
+        if os.path.exists(inst_file):
+            if os.path.exists(final_inst):
+                os.remove(final_inst)
+            os.rename(inst_file, final_inst)
+            log_safe(f"Renamed instrumental to {final_inst}")
+
+        voc_file = res_voc["vocals"]
+        final_voc = os.path.join(output_dir, f"{audio_base}_(Vocals).mp3")
+        if os.path.exists(voc_file):
+            if os.path.exists(final_voc):
+                os.remove(final_voc)
+            os.rename(voc_file, final_voc)
+            log_safe(f"Renamed vocals to {final_voc}")
+
+        # Clean up other files
+        try:
+            # Delete intermediate files that were not used
+            if os.path.exists(res_inst["vocals"]): os.remove(res_inst["vocals"])
+            if os.path.exists(res_voc["instrumental"]): os.remove(res_voc["instrumental"])
+        except:
+            pass
+
         result = {
-            "instrumental": instrumental,
-            "vocals": vocals,
-            "files": output_files
+            "instrumental": os.path.basename(final_inst),
+            "vocals": os.path.basename(final_voc),
+            "files": [os.path.basename(final_inst), os.path.basename(final_voc)]
         }
         
-        log(f"Result: {result}")
+        log_safe(f"Result: {result}")
         
         try:
             with open(result_file, "w", encoding="utf-8") as f:
                 json.dump(result, f)
         except Exception as file_e:
-            log(f"Failed to write result file: {file_e}")
+            log_safe(f"Failed to write result file: {file_e}")
 
         sys.__stdout__.write(json.dumps(result) + "\n")
         sys.__stdout__.flush()
@@ -181,8 +222,9 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
             pass
 
     except Exception as e:
-        log(f"EXCEPTION: {str(e)}")
-        log(traceback.format_exc())
+        log_safe(f"EXCEPTION: {str(e)}")
+        import traceback
+        log_safe(traceback.format_exc())
         
         err_dict = {"error": str(e)}
         try:
