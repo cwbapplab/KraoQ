@@ -1497,6 +1497,7 @@ function App() {
                                                 audioRef={audioRef} 
                                                 displayNextText={displayNextText}
                                                 gap={wordGap}
+                                                config={appConfig}
                                                 isNext={idx === activeLineIndex + 1}
                                             />
                                         </span>
@@ -1616,6 +1617,34 @@ function App() {
                                         >
                                             <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
                                         </button>
+                                    </div>
+
+                                    {/* KARAOKE SECTION */}
+                                    <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Karaoke</h3>
+                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`p-2.5 rounded-xl bg-primary/10 text-primary`}>
+                                                <RefreshCw size={20} />
+                                            </div>
+                                            <div>
+                                                <p className="text-white font-bold text-sm">Prepare Bar</p>
+                                                <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">When to display the reducing countdown bar before lines.</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-1 bg-black/40 p-0.5 rounded-lg border border-white/5 h-8">
+                                            <button 
+                                                onClick={() => typeof updateConfig !== 'undefined' && updateConfig({ ...appConfig, prepareIndicatorMode: 'all' })}
+                                                className={`px-2 rounded-md text-[10px] font-bold transition-all ${appConfig.prepareIndicatorMode === 'all' ? 'bg-primary text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
+                                            >
+                                                Always
+                                            </button>
+                                            <button 
+                                                onClick={() => typeof updateConfig !== 'undefined' && updateConfig({ ...appConfig, prepareIndicatorMode: 'long' })}
+                                                className={`px-2 rounded-md text-[10px] font-bold transition-all ${appConfig.prepareIndicatorMode !== 'all' ? 'bg-primary text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
+                                            >
+                                                Long Gaps
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {/* GPU STATUS CARD */}
@@ -1804,7 +1833,7 @@ function parseLRC(lrcText) {
     return lyricsData;
 }
 
-function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap }) {
+function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, config }) {
     const wordRefs = React.useRef([]);
     const containerRef = React.useRef(null);
     const progressBarRef = React.useRef(null);
@@ -1818,7 +1847,9 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap }) {
             
             const isFutureActive = isActive && line.words && line.words.length > 0 && currentTime < line.words[0].start;
 
-            if ((isNext || isFutureActive) && gap > 5) {
+            const showForThisGap = config?.prepareIndicatorMode === 'all' ? gap > 1.0 : gap > 5.0;
+
+            if ((isNext || isFutureActive) && showForThisGap) {
                 const start = line.words && line.words.length > 0 ? line.words[0].start : (line.time || 0);
                 const timeUntilNext = start - currentTime;
                 if (timeUntilNext > 0 && timeUntilNext < gap) {
@@ -1873,7 +1904,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap }) {
 
         rafId = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(rafId);
-    }, [isActive, isNext, gap, line.words]);
+    }, [isActive, isNext, gap, line.words, config]);
 
     // if (isNext && displayNextText.includes('•')) {
     //     return displayNextText;
@@ -1885,7 +1916,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap }) {
 
     return (
         <div className="flex flex-col items-center justify-center">
-            {(isNext || isActive) && typeof gap !== 'undefined' && gap > 5 && (
+            {(isNext || isActive) && typeof gap !== 'undefined' && (config?.prepareIndicatorMode === 'all' ? gap > 1 : gap > 5) && (
                 <div 
                     ref={containerRef} 
                     className="w-44 h-1 bg-white/10 rounded-full mb-4 overflow-hidden"
