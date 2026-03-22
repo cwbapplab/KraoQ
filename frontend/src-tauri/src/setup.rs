@@ -165,6 +165,7 @@ pub async fn install_gpu_acceleration(app: &AppHandle, python_exe: &PathBuf, tor
     torch_install.arg("-m").arg("pip").arg("install")
         .arg(format!("torch=={}", torch_version)).arg("torchvision").arg("torchaudio")
         .arg("--index-url").arg(format!("https://download.pytorch.org/whl/cu{}", cuda_tag))
+        .arg("--force-reinstall")
         .arg("--no-warn-script-location");
     
     let torch_output = torch_install.output().await.map_err(|e| format!("Torch install failed: {}", e))?;
@@ -242,14 +243,17 @@ pub async fn setup_dependencies(app: AppHandle) -> Result<String, String> {
     let state = app.state::<crate::AppState>();
     let req_path = state.python_dir.join("requirements.txt");
     let pip_done_file = app_dir.join(".pip_setup_done");
+    let gpu_done_file = app_dir.join(".gpu_setup_done");
     if !pip_done_file.exists() {
         install_pip_modules(&app, &python_exe, &req_path, 4).await?;
         let _ = std::fs::File::create(&pip_done_file);
+        // Pip modules (audio-separator[gpu]) may install CPU-only torch,
+        // so we must always re-run GPU acceleration after pip install.
+        let _ = std::fs::remove_file(&gpu_done_file);
     }
     emit_step(&app, "pip", "Neural Network Modules (Pip)", "done", 100, 4);
 
     // --- STEP 5: GPU Acceleration (Optional but Recommended) ---
-    let gpu_done_file = app_dir.join(".gpu_setup_done");
     if !gpu_done_file.exists() {
         install_gpu_acceleration(&app, &python_exe, &config.torch_version, &config.cuda_version, 5).await?;
         let _ = std::fs::File::create(&gpu_done_file);

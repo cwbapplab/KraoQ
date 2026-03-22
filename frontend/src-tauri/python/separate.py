@@ -14,7 +14,6 @@ logging.basicConfig(
 
 def log(msg):
     logging.info(msg)
-    # Also write to a dedicated simple debug file to avoid locks
     try:
         debug_file = os.path.join(output_dir_arg, "gpu_debug.txt")
         with open(debug_file, "a", encoding="utf-8") as f:
@@ -29,14 +28,12 @@ def add_nvidia_paths():
         import os
         for path in sys.path:
             if not os.path.isdir(path): continue
-            # Look for nvidia packages (installed via pip)
             for item in os.listdir(path):
                 if item.startswith('nvidia'):
                     gpu_path = os.path.join(path, item, 'bin')
                     if os.path.isdir(gpu_path):
                         paths_to_add.append(gpu_path)
             
-            # Legacy/Alternate layout
             cublas_path = os.path.join(path, 'nvidia', 'cublas', 'bin')
             cudnn_path = os.path.join(path, 'nvidia', 'cudnn', 'bin')
             if os.path.isdir(cublas_path): paths_to_add.append(cublas_path)
@@ -45,7 +42,6 @@ def add_nvidia_paths():
         for p in paths_to_add:
             if p not in os.environ['PATH']:
                 os.environ['PATH'] = p + os.pathsep + os.environ['PATH']
-                # log(f"Added to PATH: {p}") # can't log yet, logging not init
             try:
                 os.add_dll_directory(p)
             except (AttributeError, OSError):
@@ -56,7 +52,6 @@ def add_nvidia_paths():
 add_nvidia_paths()
 
 import onnxruntime as ort
-# Force verbose logging to see DLL loading and provider assignment
 ort.set_default_logger_severity(0)
 
 from audio_separator.separator import Separator
@@ -82,7 +77,6 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
         gpu_enabled = os.environ.get("GPU_ENABLED", "1") == "1"
         log(f"GPU Enabled setting: {gpu_enabled}")
 
-        # Force use of NVIDIA GPU if possible
         if gpu_enabled:
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             log("Set CUDA_VISIBLE_DEVICES to 0")
@@ -95,6 +89,17 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
             os.environ['PATH'] = bin_dir + os.pathsep + os.environ['PATH']
             log("Added bin dir to PATH for FFmpeg")
 
+        # --- GPU ENFORCEMENT ---
+        # The Separator class determines GPU usage internally by checking
+        # torch.cuda.is_available(). If PyTorch was installed as CPU-only,
+        # it returns False and the Separator falls back to CPU for BOTH 
+        # PyTorch and ONNX Runtime — even when onnxruntime-gpu is installed
+        # and CUDAExecutionProvider is available.
+        #
+        # To fix this, we monkey-patch the Separator's device setup AFTER
+        # construction so that ONNX Runtime uses CUDA when available,
+        # regardless of the PyTorch build.
+
         separator = Separator(
             log_level=logging.INFO, 
             model_file_dir=uvr_model_dir,
@@ -102,33 +107,42 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
             output_format='mp3'        
         )
 
-        log("Checking available ONNX providers...")
-        try:
+        if gpu_enabled:
             available_providers = ort.get_available_providers()
             log(f"ORT Available Providers: {available_providers}")
-            
-            # Prefer CUDA if available, but log everything
-            if 'CUDAExecutionProvider' in available_providers:
-                log("CUDA is available. Ensuring it's used...")
-            elif 'DmlExecutionProvider' in available_providers:
-                log("DirectML is available. This can be used as a high-performance fallback.")
-            else:
-                log("WARNING: Neither CUDA nor DirectML found in available providers!")
 
-        except Exception as e:
-            log(f"Error checking providers: {e}")
+            if 'CUDAExecutionProvider' in available_providers:
+                log("CUDA provider available — forcing ONNX to use CUDAExecutionProvider")
+                separator.onnx_execution_provider = [
+                    ("CUDAExecutionProvider", {"device_id": 0}),
+                    "CPUExecutionProvider"
+                ]
+                # Also ensure torch device is set to CUDA if possible
+                import torch
+                if torch.cuda.is_available():
+                    separator.torch_device = torch.device("cuda")
+                    log("PyTorch CUDA is available — torch_device set to cuda")
+                else:
+                    log("PyTorch CUDA NOT available — torch_device stays CPU, but ONNX will use CUDA")
+            elif 'DmlExecutionProvider' in available_providers:
+                log("DirectML provider available — forcing ONNX to use DmlExecutionProvider")
+                separator.onnx_execution_provider = ["DmlExecutionProvider", "CPUExecutionProvider"]
+            else:
+                log("WARNING: No GPU execution provider found in ONNX Runtime!")
+                log(f"Only available: {available_providers}")
+        else:
+            log("GPU disabled by user setting. Using CPU only.")
+            separator.onnx_execution_provider = ["CPUExecutionProvider"]
+            import torch
+            separator.torch_device = torch.device("cpu")
+
+        log(f"Final onnx_execution_provider: {separator.onnx_execution_provider}")
+        log(f"Final torch_device: {separator.torch_device}")
 
         log(f"Loading model {model_name}...")
-        
         separator.load_model(model_filename=model_name)
         
-        # Verify provider after loading
-        try:
-            # Note: This is a bit hacky depending on audio-separator version
-            # but we want to see what actually got loaded.
-            log("Model loaded. Attempting to verify active provider...")
-        except Exception:
-            pass
+        log("Model loaded successfully.")
 
         log("Running separation...")
         output_files = separator.separate(audio_path)
@@ -153,8 +167,6 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
         
         log(f"Result: {result}")
         
-        # Write to file as a fallback in case stdout is swallowed by C-level dup2
-        result_file = os.path.join(output_dir, "separate_result.json")
         try:
             with open(result_file, "w", encoding="utf-8") as f:
                 json.dump(result, f)

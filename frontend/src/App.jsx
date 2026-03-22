@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw, Cpu, Monitor } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
 import { invoke } from '@tauri-apps/api/core';
@@ -56,6 +56,8 @@ function App() {
     const [showSettings, setShowSettings] = useState(false);
     const [appConfig, setAppConfig] = useState({ gpuEnabled: true });
     const [isReinstalling, setIsReinstalling] = useState(null); // id of dependency being reinstalled
+    const [gpuStatus, setGpuStatus] = useState(null); // { status, message, torchVersion, ... }
+    const [isCheckingGpu, setIsCheckingGpu] = useState(false);
     const headerRef = useRef(null);
     const audioRef = useRef(null);
     const karaokeContainerRef = useRef(null);
@@ -137,6 +139,22 @@ function App() {
         };
     }, []);
 
+    // Listen to processing status updates
+    useEffect(() => {
+        let unlistenStatus;
+        const initStatusListener = async () => {
+            unlistenStatus = await listen('process_status', (event) => {
+                if (event.payload && event.payload.step) {
+                    setStatus(event.payload.step);
+                }
+            });
+        };
+        initStatusListener();
+        return () => {
+            if (unlistenStatus) unlistenStatus();
+        };
+    }, []);
+
     const loadConfig = async () => {
         try {
             const config = await invoke('get_app_config');
@@ -155,6 +173,26 @@ function App() {
         }
     };
 
+    const checkGpuStatus = useCallback(async () => {
+        setIsCheckingGpu(true);
+        try {
+            const status = await invoke('check_gpu_status');
+            setGpuStatus(status);
+        } catch (e) {
+            console.error('GPU check failed', e);
+            setGpuStatus({ status: 'unavailable', message: 'Failed to check: ' + e, torchVersion: '', torchCudaAvailable: false, torchCudaVersion: '', onnxProviders: [], cudaDeviceName: '' });
+        } finally {
+            setIsCheckingGpu(false);
+        }
+    }, []);
+
+    // Check GPU status when settings are opened
+    useEffect(() => {
+        if (showSettings && !gpuStatus && !isCheckingGpu) {
+            checkGpuStatus();
+        }
+    }, [showSettings]);
+
     const handleReinstall = async (id) => {
         setIsReinstalling(id);
         try {
@@ -162,6 +200,11 @@ function App() {
             setSetupSteps(prev => prev.map(step =>
                 step.id === id ? { ...step, status: 'done', progress: 100 } : step
             ));
+            // Refresh GPU status after reinstalling GPU toolkit or pip
+            if (id === 'gpu' || id === 'pip') {
+                setGpuStatus(null);
+                checkGpuStatus();
+            }
         } catch (e) {
             console.error(`Failed to reinstall ${id}`, e);
             alert(`Failed to reinstall ${id}: ${e}`);
@@ -448,6 +491,22 @@ function App() {
         longPressTriggeredRef.current = false;
     };
 
+    const cancelProcessing = async (e) => {
+        if (e) e.stopPropagation();
+        if (!currentSong?.videoId) return;
+        try {
+            await invoke('cancel_processing', { videoId: currentSong.videoId });
+            setStatus("Cancelled processing.");
+        } catch (err) {
+            console.error(err);
+        }
+        setIsTransitioning(false);
+        setTransitionStage('idle');
+        setSelectedRect(null);
+        setHeaderRect(null);
+        setSelectedSource(null);
+        setIsProcessing(false);
+    };
 
     const processSong = async (videoIdInput, thumbnail = null, e = null) => {
         // Handle variations (old history or direct pass)
@@ -460,8 +519,8 @@ function App() {
         }
 
         // Immediately set info for transition tracking
-        let title = "Loading...";
-        let artist = "";
+        let title = (typeof videoIdInput === 'object' ? (videoIdInput.title || videoIdInput.name || "Loading...") : "Loading...");
+        let artist = (typeof videoIdInput === 'object' ? (videoIdInput.artists || videoIdInput.artist || "") : "");
         const foundInSearch = searchResults.find(v => v.videoId === videoId);
         const foundInRecent = recentSongs.find(s => s.videoId === videoId);
         if (foundInSearch) {
@@ -569,6 +628,13 @@ function App() {
 
         } catch (e) {
             console.error(e);
+            if (e === "Processing cancelled by user" || (e.message && e.message.includes("cancelled"))) {
+                setStatus("Cancelled execution.");
+                setIsTransitioning(false);
+                setTransitionStage('idle');
+                setIsProcessing(false);
+                return;
+            }
 
             // ERROR RECOVERY - Redirect to search
             if (songTitle) {
@@ -863,7 +929,7 @@ function App() {
                     style={transitionStage === 'hero' || transitionStage === 'fadeout' ? {
                         top: '50%',
                         left: '50%',
-                        transform: `translate(-50%, -50%) scale(${transitionStage === 'fadeout' ? 0.7 : 0.6})`
+                        transform: `translate(-50%, -50%) scale(${transitionStage === 'fadeout' ? 1.0 : 0.9})`
                     } : {
                         top: selectedRect?.top,
                         left: selectedRect?.left,
@@ -874,7 +940,7 @@ function App() {
                     className={`
                         fixed z-[1000] transition-[transform,opacity,filter,top,left,width,height] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)] flex items-center flex-nowrap will-change-[transform,top,left,width,height,opacity]
                         ${transitionStage === 'hero' || transitionStage === 'fadeout'
-                            ? 'p-6 gap-6 rounded-full w-auto max-w-[600px] min-w-[350px] pr-12 bg-slate-900/90 backdrop-blur-md border border-primary/50 shadow-[0_0_80px_rgba(99,102,241,0.4)] ring-2 ring-primary/30'
+                            ? 'p-8 gap-8 rounded-full w-max max-w-[95vw] min-w-[450px] pr-12 bg-slate-900/90 backdrop-blur-md border border-primary/50 shadow-[0_0_80px_rgba(99,102,241,0.4)] ring-2 ring-primary/30'
                             : `gap-4 bg-card-bg border border-white/10 shadow-xl overflow-hidden ${selectedSource === 'recent' ? 'p-3 rounded-full' : (selectedSource === 'dropdown' ? 'p-3 rounded-xl' : 'p-4 rounded-2xl')}`}
                         ${transitionStage === 'fadeout' ? 'opacity-0 blur-2xl scale-110' : 'opacity-100'}
                     `}
@@ -884,7 +950,7 @@ function App() {
                         className={`
                             shrink-0 transition-[transform,width,height,border-radius] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)] will-change-[transform,width,height]
                             ${transitionStage === 'hero' || transitionStage === 'fadeout'
-                                ? 'w-20 h-20 rounded-full shadow-lg'
+                                ? 'w-28 h-28 rounded-full shadow-lg'
                                 : (selectedSource === 'recent' ? 'w-10 h-10 rounded-full' : (selectedSource === 'dropdown' ? 'w-12 h-12 rounded' : 'w-24 h-24 rounded-xl'))}
                             object-cover
                         `}
@@ -893,31 +959,44 @@ function App() {
                         <h2 className={`
                             font-black text-white transition-[font-size,opacity] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)]
                             ${transitionStage === 'hero' || transitionStage === 'fadeout'
-                                ? 'text-2xl whitespace-nowrap truncate'
+                                ? 'text-4xl whitespace-nowrap block truncate'
                                 : (selectedSource === 'recent' || selectedSource === 'dropdown' ? 'text-sm font-medium truncat' : 'text-lg font-bold truncate')}
                         `}>
                             {currentSong.title}
                         </h2>
                         {currentSong.artist && (
                             <p className={`
-                                text-text-muted transition-[font-size,opacity] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)]
+                                text-text-muted transition-[font-size,opacity] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)] truncate
                                 ${transitionStage === 'hero' || transitionStage === 'fadeout'
-                                    ? 'text-lg mt-0.5'
-                                    : 'text-xs truncate'}
+                                    ? 'text-xl font-bold tracking-tight mt-1'
+                                    : 'text-xs'}
                             `}>
                                 {currentSong.artist}
                             </p>
                         )}
                         {/* Preparing Status */}
                         {(transitionStage === 'hero' || transitionStage === 'fadeout') && (
-                            <p className={`text-primary-hover font-bold animate-pulse mt-1 flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
-                                <Mic2 size={18} /> Preparing Your Stage...
-                            </p>
+                            <div className="flex items-center gap-6 mt-4">
+                                <p className={`text-primary-hover text-base font-bold animate-pulse shrink-0 flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
+                                    <Mic2 size={18} /> Preparing Your Stage...
+                                </p>
+                                {status && (
+                                    <p className={`text-sm tracking-wide text-white/50 bg-white/5 px-3 py-1 rounded-full animate-pulse whitespace-nowrap flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
+                                        <ArrowRight size={14} className="opacity-50 text-white" /> {status}
+                                    </p>
+                                )}
+                            </div>
                         )}
                     </div>
                     {/* Progress Circle for API calls */}
                     {isProcessing && (transitionStage === 'hero' || transitionStage === 'fadeout') && (
-                        <div className="ml-auto shrink-0 animate-in fade-in zoom-in duration-500">
+                        <div className="ml-4 shrink-0 flex items-center gap-4 animate-in fade-in zoom-in duration-500">
+                            <button
+                                onClick={cancelProcessing}
+                                className={`px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 rounded-full text-xs font-bold uppercase tracking-wider transition-colors pointer-events-auto ${transitionStage === 'fadeout' ? 'opacity-0 scale-90' : 'opacity-100'}`}
+                            >
+                                Cancel
+                            </button>
                             <div className="w-10 h-10 rounded-full border-4 border-white/5 border-t-primary animate-spin shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
                         </div>
                     )}
@@ -1440,6 +1519,84 @@ function App() {
                                         >
                                             <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
                                         </button>
+                                    </div>
+
+                                    {/* GPU STATUS CARD */}
+                                    <div className={`mt-4 rounded-2xl border p-4 transition-all ${
+                                        isCheckingGpu ? 'bg-white/5 border-white/5' :
+                                        gpuStatus?.status === 'ok' ? 'bg-emerald-500/10 border-emerald-500/20' :
+                                        gpuStatus?.status === 'degraded' ? 'bg-amber-500/10 border-amber-500/20' :
+                                        'bg-red-500/10 border-red-500/20'
+                                    }`}>
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="flex items-start gap-3 min-w-0">
+                                                <div className={`p-2 rounded-xl shrink-0 ${
+                                                    isCheckingGpu ? 'bg-white/10 text-white/40' :
+                                                    gpuStatus?.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                    gpuStatus?.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
+                                                    'bg-red-500/20 text-red-400'
+                                                }`}>
+                                                    {isCheckingGpu ? <Loader2 size={18} className="animate-spin" /> : <Monitor size={18} />}
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <p className="text-white font-bold text-xs">GPU Status</p>
+                                                        {!isCheckingGpu && gpuStatus && (
+                                                            <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md ${
+                                                                gpuStatus.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                                gpuStatus.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
+                                                                'bg-red-500/20 text-red-400'
+                                                            }`}>
+                                                                {gpuStatus.status === 'ok' ? 'Active' : gpuStatus.status === 'degraded' ? 'Degraded' : 'CPU Only'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {isCheckingGpu ? (
+                                                        <p className="text-white/30 text-[10px]">Checking GPU environment...</p>
+                                                    ) : gpuStatus ? (
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-white/50 text-[10px] leading-relaxed">{gpuStatus.message}</p>
+                                                            <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                                                <span className="text-[9px] text-white/30">
+                                                                    <span className="text-white/50 font-semibold">Torch:</span> {gpuStatus.torchVersion}
+                                                                </span>
+                                                                {gpuStatus.torchCudaVersion && (
+                                                                    <span className="text-[9px] text-white/30">
+                                                                        <span className="text-white/50 font-semibold">CUDA:</span> {gpuStatus.torchCudaVersion}
+                                                                    </span>
+                                                                )}
+                                                                {gpuStatus.cudaDeviceName && (
+                                                                    <span className="text-[9px] text-white/30">
+                                                                        <span className="text-white/50 font-semibold">GPU:</span> {gpuStatus.cudaDeviceName}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {gpuStatus.onnxProviders?.length > 0 && (
+                                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                                    {gpuStatus.onnxProviders.map(p => (
+                                                                        <span key={p} className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
+                                                                            p.includes('CUDA') ? 'bg-emerald-500/15 text-emerald-400/80' :
+                                                                            p.includes('Tensorrt') ? 'bg-blue-500/15 text-blue-400/80' :
+                                                                            p.includes('Dml') ? 'bg-purple-500/15 text-purple-400/80' :
+                                                                            'bg-white/5 text-white/30'
+                                                                        }`}>{p.replace('ExecutionProvider', '')}</span>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                            {!isCheckingGpu && (
+                                                <button
+                                                    onClick={checkGpuStatus}
+                                                    className="p-1.5 rounded-lg hover:bg-white/10 text-white/30 hover:text-white/60 transition-all shrink-0"
+                                                    title="Re-check GPU status"
+                                                >
+                                                    <RefreshCw size={12} />
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 </section>
 
