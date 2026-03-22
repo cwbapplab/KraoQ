@@ -49,7 +49,16 @@ function App() {
     const [transitionStage, setTransitionStage] = useState('idle'); // idle, start, hero
     const [selectedSource, setSelectedSource] = useState(null); // 'search' or 'recent'
     const [isProcessing, setIsProcessing] = useState(false);
+    const [isAutoPaused, setIsAutoPaused] = useState(false);
+    const [nextSingerCount, setNextSingerCount] = useState(null);
+    const [nextSingerName, setNextSingerName] = useState("");
+    const [nextSongItem, setNextSongItem] = useState(null);
+    const [isWaitingForNextQueue, setIsWaitingForNextQueue] = useState(false);
     const [suggestions, setSuggestions] = useState([]);
+
+
+
+
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [searchLimit, setSearchLimit] = useState(20);
     const [headerRect, setHeaderRect] = useState(null);
@@ -252,6 +261,9 @@ function App() {
         return () => { if (unlistenParty) unlistenParty(); };
     }, []);
 
+    // Ref to track waiting state without stale closures inside setKaraokeMode
+    const isWaitingRef = useRef(false);
+
     // Process Queue Worker
     useEffect(() => {
         if (!isPartyMode || queue.length === 0) return;
@@ -263,11 +275,44 @@ function App() {
             setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'processing' } : i));
 
             try {
-                await invoke('process_yt', { videoId: nextItem.videoId });
-                setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'ready' } : i));
-                
-                // If not currently in Karaoke, trigger instantly? 
-                // Mostly let it handle via ended or manually.
+                const res = await invoke('process_yt', { videoId: nextItem.videoId });
+                const result = JSON.parse(res);
+
+                // Load the song into the player - either opening it fresh OR replacing the waiting screen
+                const openSong = () => {
+                    setLyricsData(result.data.segments);
+                    setCurrentSong({
+                        title: nextItem.title,
+                        artist: nextItem.artists,
+                        thumbnail: nextItem.thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
+                        videoId: nextItem.videoId,
+                        instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
+                        vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "",
+                        singer: nextItem.singer
+                    });
+                    setIsPlaying(false);
+                    setIsAutoPaused(true);
+                    setShowControls(true);
+                    setIsWaitingForNextQueue(false);
+                    isWaitingRef.current = false;
+                    setQueue(prev => prev.filter(i => i.videoId !== nextItem.videoId));
+                    invoke('remove_from_party_queue', { videoId: nextItem.videoId }).catch(console.error);
+                };
+
+                setKaraokeMode(currentValue => {
+                    if (!currentValue) {
+                        // First song: open karaoke screen
+                        openSong();
+                        return true;
+                    } else if (isWaitingRef.current) {
+                        // Song ended while next was still downloading — now it's ready
+                        openSong();
+                        return true;
+                    }
+                    // Song already playing: just mark as ready, countdown will handle it
+                    setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'ready' } : i));
+                    return currentValue;
+                });
             } catch (e) {
                 console.error("Queue download failed", e);
                 setQueue(prev => prev.map(i => i.videoId === nextItem.videoId ? { ...i, status: 'error', error: e.toString() } : i));
@@ -280,35 +325,42 @@ function App() {
         }
     }, [queue, isPartyMode]);
 
+
+
     // Play next from Queue function
-    const playFromQueue = useCallback(async (songItem) => {
-         setIsProcessing(true);
-         try {
-             const res = await invoke('process_yt', { videoId: songItem.videoId });
-             const result = JSON.parse(res);
-             const parsed = result.data.segments;
-             setLyricsData(parsed);
+    const playFromQueue = useCallback(async (songItem, startPaused = false) => {
+        setIsAutoPaused(startPaused);
+        setIsProcessing(true);
 
-             setCurrentSong({
-                 title: songItem.title,
-                 artist: songItem.artists,
-                 thumbnail: songItem.thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
-                 videoId: songItem.videoId,
-                 instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
-                 vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : ""
-             });
 
-             setQueue(prev => prev.filter(i => i.videoId !== songItem.videoId));
-             setKaraokeMode(true);
-             setIsProcessing(false);
-             
-             // Clear from Rust Party Queue Mutex state so singer can add again
-             await invoke('remove_from_party_queue', { videoId: songItem.videoId });
-         } catch (e) {
+        try {
+            const res = await invoke('process_yt', { videoId: songItem.videoId });
+            const result = JSON.parse(res);
+            const parsed = result.data.segments;
+            setLyricsData(parsed);
 
-             console.error("Queue play failed", e);
-             setIsProcessing(false);
-         }
+            setCurrentSong({
+                title: songItem.title,
+                artist: songItem.artists,
+                thumbnail: songItem.thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
+                videoId: songItem.videoId,
+                instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
+                vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "",
+                singer: songItem.singer
+            });
+
+
+            setQueue(prev => prev.filter(i => i.videoId !== songItem.videoId));
+            setKaraokeMode(true);
+            setIsProcessing(false);
+
+            // Clear from Rust Party Queue Mutex state so singer can add again
+            await invoke('remove_from_party_queue', { videoId: songItem.videoId });
+        } catch (e) {
+
+            console.error("Queue play failed", e);
+            setIsProcessing(false);
+        }
     }, []);
 
     useEffect(() => {
@@ -316,21 +368,53 @@ function App() {
         if (!audio) return;
 
         const handleEnded = () => {
-             if (isPartyMode) {
-                 const nextReady = queue.find(item => item.status === 'ready');
-                 if (nextReady) {
-                     playFromQueue(nextReady);
-                 } else {
-                     setKaraokeMode(false);
-                 }
-             } else {
-                 setKaraokeMode(false);
-             }
+            if (isPartyMode) {
+                const nextReady = queue.find(item => item.status === 'ready');
+                if (nextReady) {
+                    setNextSingerName(nextReady.singer || "Guest");
+                    setNextSingerCount(10);
+                    setNextSongItem(nextReady);
+                } else {
+                    const nextProcessing = queue.find(item => item.status === 'processing' || item.status === 'waiting');
+                    if (nextProcessing) {
+                        isWaitingRef.current = true;
+                        setIsWaitingForNextQueue(true);
+                    } else {
+                        setKaraokeMode(false);
+                    }
+                }
+            } else {
+
+                setKaraokeMode(false);
+            }
         };
 
         audio.addEventListener('ended', handleEnded);
         return () => audio.removeEventListener('ended', handleEnded);
     }, [queue, isPartyMode, playFromQueue]);
+
+    // Next Singer Countdown Effect
+    useEffect(() => {
+        if (nextSingerCount === null) return;
+
+        if (nextSingerCount <= 0) {
+            setNextSingerCount(null);
+            if (nextSongItem) {
+                setShowControls(true);
+                playFromQueue(nextSongItem, true); // startPaused = true
+                setNextSongItem(null);
+            }
+            return;
+
+        }
+
+        const timer = setTimeout(() => {
+            setNextSingerCount(prev => prev - 1);
+        }, 1000);
+
+        return () => clearTimeout(timer);
+    }, [nextSingerCount, nextSongItem, playFromQueue]);
+
 
 
 
@@ -648,7 +732,9 @@ function App() {
     };
 
     const processSong = async (videoIdInput, thumbnail = null, e = null) => {
+        setIsAutoPaused(false);
         // Handle variations (old history or direct pass)
+
         const videoId = (typeof videoIdInput === 'string' ? videoIdInput : (videoIdInput?.videoId || videoIdInput?.id));
         const songTitle = (typeof videoIdInput === 'object' ? (videoIdInput.title || videoIdInput.name) : null);
 
@@ -1524,11 +1610,10 @@ function App() {
                                         if (confirmModal.onConfirm) confirmModal.onConfirm();
                                         setConfirmModal({ ...confirmModal, isOpen: false });
                                     }}
-                                    className={`px-4 py-2 rounded-xl text-sm font-black transition-all ${
-                                        confirmModal.type === 'danger' 
-                                        ? 'bg-red-500 hover:bg-red-600 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]' 
+                                    className={`px-4 py-2 rounded-xl text-sm font-black transition-all ${confirmModal.type === 'danger'
+                                        ? 'bg-red-500 hover:bg-red-600 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]'
                                         : 'bg-primary hover:bg-primary-hover text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]'
-                                    }`}
+                                        }`}
                                 >
                                     {confirmModal.confirmText || 'Confirm'}
                                 </button>
@@ -1557,19 +1642,62 @@ function App() {
                         style={{ touchAction: 'none' }}
                     >
                         <AuroraBackground audioRef={audioRef} />
+
+                        {/* NEXT SINGER COUNTDOWN OVERLAY */}
+                        {nextSingerCount !== null && (
+                            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 backdrop-blur-3xl animate-in fade-in duration-300">
+                                <p className="text-primary text-sm font-black tracking-[0.2em] uppercase mb-2">Next Singer</p>
+                                <h2 className="text-5xl font-black text-white mb-8 drop-shadow-[0_0_15px_rgba(99,102,241,0.5)]">{nextSingerName}</h2>
+
+                                <div className="flex items-center justify-center w-24 h-24 rounded-full border-4 border-white/10 text-4xl font-black text-white relative bg-white/5">
+                                    <div className="absolute -inset-1 rounded-full border-4 border-primary border-t-transparent border-r-transparent animate-spin" />
+                                    {nextSingerCount}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* WAITING FOR NEXT QUEUE OVERLAY */}
+                        {isWaitingForNextQueue && (
+                            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 backdrop-blur-3xl animate-in fade-in duration-300">
+                                <div className="p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-xl flex flex-col items-center justify-center shadow-2xl">
+                                    <div className="p-4 rounded-2xl bg-primary/20 text-primary mb-4">
+                                        <Loader2 size={36} className="animate-spin" />
+                                    </div>
+                                    <h3 className="text-2xl font-black text-white mb-2">Setting Up Your Stage</h3>
+                                    <p className="text-white/60 text-sm max-w-[280px] text-center mb-6">Hang tight while the next track finishes downloading…</p>
+                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-[11px] font-bold text-emerald-400">
+                                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                        Processing Background Queue
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+
+
                         {/* Play/Pause Overlay */}
                         <div className={`
                             absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-300
                             ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
                         `}>
+                            {isPartyMode && !isPlaying && currentSong?.singer && (
+                                <div className="absolute top-[20%] left-1/2 -translate-x-1/2 text-center animate-in slide-in-from-top-4 duration-500">
+                                    <p className="text-primary-hover text-lg font-black tracking-[0.3em] uppercase mb-2 drop-shadow-sm">Time to Shine</p>
+                                    <h2 className="text-8xl font-black text-white drop-shadow-[0_0_25px_rgba(99,102,241,0.6)] tracking-tight">{currentSong.singer}</h2>
+                                </div>
+                            )}
+
                             <div
                                 onClick={(e) => {
+
                                     e.stopPropagation();
                                     if (audioRef.current.paused) {
                                         audioRef.current.play();
+                                        setShowControls(false);
                                     } else {
                                         audioRef.current.pause();
                                     }
+
                                 }}
                                 className="w-24 h-24 flex items-center justify-center bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white shadow-2xl transform active:scale-90 transition-[background-color,transform] cursor-pointer hover:bg-white/20"
                             >
@@ -1619,26 +1747,27 @@ function App() {
                                             key={idx}
                                             className={`flex items-center justify-center transition-all duration-500 h-[220px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
                                         >
-                                        <span
-                                            className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? '' : 'text-white'}`}
-                                            style={{
-                                                fontSize: 'clamp(1.2rem, 6vw, 3.5rem)',
-                                                textShadow: idx === activeLineIndex ? '0 0 15px rgba(99,102,241,0.5)' : 'none',
-                                            }}
-                                        >
-                                            <LyricLine 
-                                                line={line} 
-                                                isActive={idx === activeLineIndex} 
-                                                audioRef={audioRef} 
-                                                displayNextText={displayNextText}
-                                                gap={wordGap}
-                                                config={appConfig}
-                                                isFirst={idx === 0}
-                                                isNext={idx === activeLineIndex + 1}
-                                            />
-                                        </span>
-                                    </div>
-                                )})}
+                                            <span
+                                                className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? '' : 'text-white'}`}
+                                                style={{
+                                                    fontSize: 'clamp(1.2rem, 6vw, 3.5rem)',
+                                                    textShadow: idx === activeLineIndex ? '0 0 15px rgba(99,102,241,0.5)' : 'none',
+                                                }}
+                                            >
+                                                <LyricLine
+                                                    line={line}
+                                                    isActive={idx === activeLineIndex}
+                                                    audioRef={audioRef}
+                                                    displayNextText={displayNextText}
+                                                    gap={wordGap}
+                                                    config={appConfig}
+                                                    isFirst={idx === 0}
+                                                    isNext={idx === activeLineIndex + 1}
+                                                />
+                                            </span>
+                                        </div>
+                                    )
+                                })}
                             </div>
                         </div>
                     </div>
@@ -1656,8 +1785,9 @@ function App() {
                                 crossOrigin="anonymous"
                                 controls
                                 controlsList="nodownload noplaybackrate"
-                                autoPlay
+                                autoPlay={!isAutoPaused}
                                 className="w-full h-10 rounded-xl invert hue-rotate-180 brightness-150 custom-audio-controls"
+
                             />
                             {!isMobile() && (
                                 <button
@@ -1669,15 +1799,21 @@ function App() {
                                 </button>
                             )}
 
-                            <div 
+                            <div
                                 className="mt-1 text-text-muted text-[10px] uppercase tracking-widest font-bold px-2 col-span-2 hover:opacity-100 opacity-60 cursor-pointer flex items-center gap-1 transition-all"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     if (currentSong && currentSong.vocalsUrl) {
                                         const currentPos = audioRef.current ? audioRef.current.currentTime : 0;
+                                        const wasPaused = audioRef.current ? audioRef.current.paused : true;
                                         setAudioMode(prev => prev === 'instrumental' ? 'vocals' : 'instrumental');
                                         setTimeout(() => {
-                                            if (audioRef.current) audioRef.current.currentTime = currentPos;
+                                            if (audioRef.current) {
+                                                audioRef.current.currentTime = currentPos;
+                                                if (!wasPaused) {
+                                                    audioRef.current.play().catch(console.error);
+                                                }
+                                            }
                                         }, 100);
                                     }
                                 }}
@@ -1768,13 +1904,13 @@ function App() {
                                             </div>
                                         </div>
                                         <div className="flex gap-1 bg-black/40 p-0.5 rounded-lg border border-white/5 h-8">
-                                            <button 
+                                            <button
                                                 onClick={() => typeof updateConfig !== 'undefined' && updateConfig({ ...appConfig, prepareIndicatorMode: 'all' })}
                                                 className={`px-2 rounded-md text-[10px] font-bold transition-all ${appConfig.prepareIndicatorMode === 'all' ? 'bg-primary text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
                                             >
                                                 Always
                                             </button>
-                                            <button 
+                                            <button
                                                 onClick={() => typeof updateConfig !== 'undefined' && updateConfig({ ...appConfig, prepareIndicatorMode: 'long' })}
                                                 className={`px-2 rounded-md text-[10px] font-bold transition-all ${appConfig.prepareIndicatorMode !== 'all' ? 'bg-primary text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
                                             >
@@ -1784,31 +1920,28 @@ function App() {
                                     </div>
 
                                     {/* GPU STATUS CARD */}
-                                    <div className={`mt-4 rounded-2xl border p-4 transition-all ${
-                                        isCheckingGpu ? 'bg-white/5 border-white/5' :
+                                    <div className={`mt-4 rounded-2xl border p-4 transition-all ${isCheckingGpu ? 'bg-white/5 border-white/5' :
                                         gpuStatus?.status === 'ok' ? 'bg-emerald-500/10 border-emerald-500/20' :
-                                        gpuStatus?.status === 'degraded' ? 'bg-amber-500/10 border-amber-500/20' :
-                                        'bg-red-500/10 border-red-500/20'
-                                    }`}>
+                                            gpuStatus?.status === 'degraded' ? 'bg-amber-500/10 border-amber-500/20' :
+                                                'bg-red-500/10 border-red-500/20'
+                                        }`}>
                                         <div className="flex items-start justify-between gap-3">
                                             <div className="flex items-start gap-3 min-w-0">
-                                                <div className={`p-2 rounded-xl shrink-0 ${
-                                                    isCheckingGpu ? 'bg-white/10 text-white/40' :
+                                                <div className={`p-2 rounded-xl shrink-0 ${isCheckingGpu ? 'bg-white/10 text-white/40' :
                                                     gpuStatus?.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                    gpuStatus?.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
-                                                    'bg-red-500/20 text-red-400'
-                                                }`}>
+                                                        gpuStatus?.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
+                                                            'bg-red-500/20 text-red-400'
+                                                    }`}>
                                                     {isCheckingGpu ? <Loader2 size={18} className="animate-spin" /> : <Monitor size={18} />}
                                                 </div>
                                                 <div className="min-w-0">
                                                     <div className="flex items-center gap-2 mb-1">
                                                         <p className="text-white font-bold text-xs">GPU Status</p>
                                                         {!isCheckingGpu && gpuStatus && (
-                                                            <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md ${
-                                                                gpuStatus.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
+                                                            <span className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md ${gpuStatus.status === 'ok' ? 'bg-emerald-500/20 text-emerald-400' :
                                                                 gpuStatus.status === 'degraded' ? 'bg-amber-500/20 text-amber-400' :
-                                                                'bg-red-500/20 text-red-400'
-                                                            }`}>
+                                                                    'bg-red-500/20 text-red-400'
+                                                                }`}>
                                                                 {gpuStatus.status === 'ok' ? 'Active' : gpuStatus.status === 'degraded' ? 'Degraded' : 'CPU Only'}
                                                             </span>
                                                         )}
@@ -1836,12 +1969,11 @@ function App() {
                                                             {gpuStatus.onnxProviders?.length > 0 && (
                                                                 <div className="flex flex-wrap gap-1 mt-1">
                                                                     {gpuStatus.onnxProviders.map(p => (
-                                                                        <span key={p} className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${
-                                                                            p.includes('CUDA') ? 'bg-emerald-500/15 text-emerald-400/80' :
+                                                                        <span key={p} className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${p.includes('CUDA') ? 'bg-emerald-500/15 text-emerald-400/80' :
                                                                             p.includes('Tensorrt') ? 'bg-blue-500/15 text-blue-400/80' :
-                                                                            p.includes('Dml') ? 'bg-purple-500/15 text-purple-400/80' :
-                                                                            'bg-white/5 text-white/30'
-                                                                        }`}>{p.replace('ExecutionProvider', '')}</span>
+                                                                                p.includes('Dml') ? 'bg-purple-500/15 text-purple-400/80' :
+                                                                                    'bg-white/5 text-white/30'
+                                                                            }`}>{p.replace('ExecutionProvider', '')}</span>
                                                                     ))}
                                                                 </div>
                                                             )}
@@ -1992,7 +2124,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
         let rafId;
         const tick = () => {
             const currentTime = audioRef.current ? audioRef.current.currentTime : 0;
-            
+
             const isFutureActive = isActive && line.words && line.words.length > 0 && currentTime < line.words[0].start;
 
             const showForThisGap = config?.prepareIndicatorMode === 'all' ? gap > 1.0 : gap > 5.0;
@@ -2022,7 +2154,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
                         const duration = w.end - w.start;
                         const elapsed = currentTime - w.start;
                         const progress = Math.max(0, Math.min(100, (elapsed / duration) * 100));
-                        
+
                         el.style.backgroundImage = `linear-gradient(to right, #ffffff ${progress}%, rgba(255, 255, 255, 0.4) ${progress}%)`;
                         el.style.webkitBackgroundClip = 'text';
                         el.style.webkitTextFillColor = 'transparent';
@@ -2033,7 +2165,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
                         el.style.backgroundImage = 'none';
                         el.style.webkitBackgroundClip = 'unset';
                         el.style.webkitTextFillColor = '#a5b4fc';
-                        el.style.color = '#a5b4fc'; 
+                        el.style.color = '#a5b4fc';
                         el.style.transform = 'scale(1.0)';
                         el.style.textShadow = 'none';
                     } else {
@@ -2066,12 +2198,12 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
     return (
         <div className="flex flex-col items-center justify-center">
             {(isNext || isActive) && typeof gap !== 'undefined' && ((config?.prepareIndicatorMode === 'all' ? gap > 1 : gap > 5) || (isFirst && gap > 1)) && (
-                <div 
-                    ref={containerRef} 
+                <div
+                    ref={containerRef}
                     className="w-44 h-1 bg-white/10 rounded-full mb-4 overflow-hidden"
                     style={{ display: 'none' }}
                 >
-                    <div 
+                    <div
                         ref={progressBarRef}
                         className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 rounded-full transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(99,102,241,0.6)]"
                         style={{ width: '100%' }}
@@ -2080,20 +2212,20 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
             )}
             <span className="flex flex-wrap items-center justify-center">
                 {line.words.map((w, i) => (
-                <span
-                    key={i}
-                    ref={el => wordRefs.current[i] = el}
-                    className="transition-all duration-100 ease-out"
-                    style={{ 
-                        margin: '0 5px',
-                        display: 'inline-block',
-                        color: isActive ? 'rgba(255,255,255,0.4)' : '#fff'
-                    }}
-                >
-                    {w.word}
-                </span>
-            ))}
-        </span>
+                    <span
+                        key={i}
+                        ref={el => wordRefs.current[i] = el}
+                        className="transition-all duration-100 ease-out"
+                        style={{
+                            margin: '0 5px',
+                            display: 'inline-block',
+                            color: isActive ? 'rgba(255,255,255,0.4)' : '#fff'
+                        }}
+                    >
+                        {w.word}
+                    </span>
+                ))}
+            </span>
         </div>
     );
 }
