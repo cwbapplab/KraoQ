@@ -255,10 +255,16 @@ function App() {
                 const currentLine = lyricsData[newIndex];
                 if (currentLine.words && currentLine.words.length > 0) {
                     const lastWord = currentLine.words[currentLine.words.length - 1];
-                    // If the last word is in the past, jump to the next line eagerly
                     if (currentTime > lastWord.end) {
                         newIndex += 1;
                     }
+                }
+            } else if (newIndex === -1 && lyricsData.length > 0) {
+                // Eager scroll for the very first line
+                const firstLine = lyricsData[0];
+                const firstStart = firstLine.words && firstLine.words.length > 0 ? firstLine.words[0].start : firstLine.time;
+                if (firstStart - currentTime <= 5.0) {
+                    newIndex = 0;
                 }
             }
 
@@ -973,11 +979,11 @@ function App() {
                             object-cover
                         `}
                     />
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1">
                         <h2 className={`
                             font-black text-white transition-[font-size,opacity] duration-1000 ease-[cubic-bezier(0.23,1,0.32,1)]
                             ${transitionStage === 'hero' || transitionStage === 'fadeout'
-                                ? 'text-4xl whitespace-nowrap block truncate'
+                                ? 'text-4xl whitespace-nowrap'
                                 : (selectedSource === 'recent' || selectedSource === 'dropdown' ? 'text-sm font-medium truncat' : 'text-lg font-bold truncate')}
                         `}>
                             {currentSong.title}
@@ -994,7 +1000,7 @@ function App() {
                         )}
                         {/* Preparing Status */}
                         {(transitionStage === 'hero' || transitionStage === 'fadeout') && (
-                            <div className="flex items-center gap-6 mt-4">
+                            <div className="flex flex-col items-start gap-1.5 mt-4">
                                 <p className={`text-primary-hover text-base font-bold animate-pulse shrink-0 flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
                                     <Mic2 size={18} /> Preparing Your Stage...
                                 </p>
@@ -1477,6 +1483,8 @@ function App() {
                                     const prevEnd = prevLine && prevLine.words && prevLine.words.length > 0 ? prevLine.words[prevLine.words.length - 1].end : (prevLine ? prevLine.time : 0);
                                     if (prevLine) {
                                         wordGap = currStart - prevEnd;
+                                    } else {
+                                        wordGap = currStart; // For the very first line, gap is the intro break length
                                     }
 
                                     return (
@@ -1498,6 +1506,7 @@ function App() {
                                                 displayNextText={displayNextText}
                                                 gap={wordGap}
                                                 config={appConfig}
+                                                isFirst={idx === 0}
                                                 isNext={idx === activeLineIndex + 1}
                                             />
                                         </span>
@@ -1833,7 +1842,7 @@ function parseLRC(lrcText) {
     return lyricsData;
 }
 
-function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, config }) {
+function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, config, isFirst }) {
     const wordRefs = React.useRef([]);
     const containerRef = React.useRef(null);
     const progressBarRef = React.useRef(null);
@@ -1848,8 +1857,9 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
             const isFutureActive = isActive && line.words && line.words.length > 0 && currentTime < line.words[0].start;
 
             const showForThisGap = config?.prepareIndicatorMode === 'all' ? gap > 1.0 : gap > 5.0;
+            const forceFirst = isFirst && gap > 1.0;
 
-            if ((isNext || isFutureActive) && showForThisGap) {
+            if ((isNext || isFutureActive) && (showForThisGap || forceFirst)) {
                 const start = line.words && line.words.length > 0 ? line.words[0].start : (line.time || 0);
                 const timeUntilNext = start - currentTime;
                 if (timeUntilNext > 0 && timeUntilNext < gap) {
@@ -1904,7 +1914,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
 
         rafId = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(rafId);
-    }, [isActive, isNext, gap, line.words, config]);
+    }, [isActive, isNext, gap, line.words, config, isFirst]);
 
     // if (isNext && displayNextText.includes('•')) {
     //     return displayNextText;
@@ -1916,7 +1926,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
 
     return (
         <div className="flex flex-col items-center justify-center">
-            {(isNext || isActive) && typeof gap !== 'undefined' && (config?.prepareIndicatorMode === 'all' ? gap > 1 : gap > 5) && (
+            {(isNext || isActive) && typeof gap !== 'undefined' && ((config?.prepareIndicatorMode === 'all' ? gap > 1 : gap > 5) || (isFirst && gap > 1)) && (
                 <div 
                     ref={containerRef} 
                     className="w-44 h-1 bg-white/10 rounded-full mb-4 overflow-hidden"
