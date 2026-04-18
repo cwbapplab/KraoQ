@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")] // Match frontend format
 pub struct CachedSong {
     pub video_id: String,

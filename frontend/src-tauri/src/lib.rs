@@ -17,6 +17,7 @@ use tauri_plugin_fs::FsExt;
 use serde::{Serialize, Deserialize};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot;
+use reqwest;
 
 pub struct AppState {
     pub db_conn: Mutex<rusqlite::Connection>,
@@ -690,6 +691,154 @@ async fn reinstall_dependency(id: String, app: AppHandle) -> Result<(), String> 
     Ok(())
 }
 
+
+#[tauri::command]
+async fn search_lrclib(query: String) -> Result<Vec<LrcSearchResult>, String> {
+    let url = format!("https://lrclib.net/api/search?q={}", urlencoding::encode(&query));
+    let response = reqwest::get(url).await.map_err(|e| e.to_string())?;
+    let results: Vec<LrcLibResult> = response.json().await.map_err(|e: reqwest::Error| e.to_string())?;
+
+    let mut output = Vec::new();
+    for res in results {
+        let first_word_time = res.synced_lyrics.as_ref().and_then(|l| {
+            // Find the first [mm:ss.xx]
+            let re = regex::Regex::new(r"\[(\d+):(\d+\.\d+)\]").unwrap();
+            if let Some(caps) = re.captures(l) {
+                let mins: f64 = caps[1].parse().unwrap_or(0.0);
+                let secs: f64 = caps[2].parse().unwrap_or(0.0);
+                Some(mins * 60.0 + secs)
+            } else {
+                None
+            }
+        });
+
+        output.push(LrcSearchResult {
+            id: res.id,
+            lrc_name: format!("{} - {}", res.track_name, res.artist_name),
+            song_length: res.duration,
+            first_word_time,
+            synced_lyrics: res.synced_lyrics,
+            plain_lyrics: res.plain_lyrics,
+        });
+    }
+
+    Ok(output)
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LrcLibResult {
+    id: i64,
+    track_name: String,
+    artist_name: String,
+    duration: f64,
+    synced_lyrics: Option<String>,
+    plain_lyrics: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LrcSearchResult {
+    id: i64,
+    lrc_name: String,
+    song_length: f64,
+    first_word_time: Option<f64>,
+    synced_lyrics: Option<String>,
+    plain_lyrics: Option<String>,
+}
+
+#[tauri::command]
+async fn apply_alternative_lyrics(video_id: String, lyrics_text: String, lrclib_id: Option<i64>, app: AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    
+    // 1. Get existing song info
+    let song = {
+        let conn = state.db_conn.lock().unwrap();
+        db::get_song(&conn, &video_id).map_err(|e| e.to_string())?
+            .ok_or_else(|| "Song not found in library".to_string())?
+    };
+
+    // 2. Determine paths
+    let inst_path = PathBuf::from(&song.instrumental_path);
+    let parent_dir = inst_path.parent().unwrap_or(&state.uploads_dir);
+    
+    // Find vocals path (similar logic as in process_yt)
+    let mut vocals_path = String::new();
+    if let Some(inst_file) = inst_path.file_name().and_then(|f| f.to_str()) {
+        let mut voc_file = inst_file.to_string();
+        if let Some(idx) = voc_file.find("_(Instrumental)_") {
+            voc_file = format!("{}.mp3", &voc_file[..idx]);
+        } else if let Some(idx) = voc_file.find("_(Instrumental).mp3") {
+            voc_file = format!("{}.mp3", &voc_file[..idx]);
+        }
+        let candidate = parent_dir.join(&voc_file);
+        if candidate.exists() {
+            vocals_path = candidate.to_string_lossy().to_string();
+        }
+    }
+    
+    if vocals_path.is_empty() {
+        vocals_path = song.instrumental_path.clone(); // fallback
+    }
+
+    // 3. Save new LRC to a temp file for alignment
+    let name_suffix = if let Some(id) = lrclib_id { format!("_alt_{}", id) } else { "_alt".to_string() };
+    let new_lrc_filename = format!("{}{}.lrc", video_id, name_suffix);
+    let new_lrc_path = parent_dir.join(&new_lrc_filename);
+    std::fs::write(&new_lrc_path, &lyrics_text).map_err(|e| format!("Failed to save new LRC: {}", e))?;
+
+    // 4. Align if possible
+    let python_exe = get_python_exe(&app);
+    let align_script = state.python_dir.join("align_elrc.py");
+    let elrc_path = new_lrc_path.with_extension("elrc");
+
+    let mut align_cmd = create_command(&python_exe);
+    align_cmd.arg(&align_script)
+             .arg(&vocals_path)
+             .arg(&new_lrc_path)
+             .arg(&elrc_path);
+
+    let output = align_cmd.output().await;
+    
+    let final_lrc_path = if let Ok(out) = output {
+        if out.status.success() && elrc_path.exists() {
+            elrc_path
+        } else {
+            new_lrc_path
+        }
+    } else {
+        new_lrc_path
+    };
+
+    // 5. Update Database
+    let mut updated_song = song.clone();
+    updated_song.lrc_path = final_lrc_path.to_string_lossy().to_string();
+    updated_song.missing_lyrics = false;
+    
+    {
+        let conn = state.db_conn.lock().unwrap();
+        db::insert_song(&conn, &updated_song).map_err(|e| e.to_string())?;
+    }
+
+    // 6. Return parsed segments
+    let lrc_content = std::fs::read_to_string(&updated_song.lrc_path).map_err(|e| e.to_string())?;
+    let segments = parse_lrc(&lrc_content);
+    
+    let res = serde_json::json!({
+        "message": "Alternative lyrics applied",
+        "data": {
+            "segments": segments,
+            "lrc": lrc_content,
+            "instrumentalUrl": updated_song.instrumental_path,
+            "vocalsUrl": vocals_path,
+            "title": updated_song.title,
+            "artist": updated_song.artist
+        }
+    });
+
+    Ok(res.to_string())
+}
+
 #[tauri::command]
 async fn get_recommendations(app: tauri::AppHandle) -> Result<Vec<db::CachedSong>, String> {
     let state = app.state::<AppState>();
@@ -700,6 +849,59 @@ async fn get_recommendations(app: tauri::AppHandle) -> Result<Vec<db::CachedSong
 
 
 
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LyricsStatus {
+    active_id: Option<i64>,
+    downloaded_ids: Vec<i64>,
+}
+
+#[tauri::command]
+async fn get_lyrics_status(video_id: String, app: tauri::AppHandle) -> Result<LyricsStatus, String> {
+    let state = app.state::<AppState>();
+    
+    let song = {
+        let conn = state.db_conn.lock().unwrap();
+        db::get_song(&conn, &video_id).map_err(|e| e.to_string())?
+    };
+    
+    let mut status = LyricsStatus {
+        active_id: None,
+        downloaded_ids: Vec::new(),
+    };
+    
+    if let Some(song) = song {
+        let path = std::path::Path::new(&song.lrc_path);
+        let file_name_str = path.file_stem().and_then(|n| n.to_str()).unwrap_or("");
+        
+        let prefix = format!("{}_alt_", video_id);
+        if file_name_str.starts_with(&prefix) {
+            if let Ok(id) = file_name_str[prefix.len()..].parse::<i64>() {
+                status.active_id = Some(id);
+            }
+        }
+        
+        // Scan directory for downloaded alternatives
+        let parent_dir = path.parent().unwrap_or(&state.uploads_dir);
+        if let Ok(entries) = std::fs::read_dir(parent_dir) {
+            for entry in entries.flatten() {
+                if let Some(mut f_name) = entry.file_name().to_str() {
+                    if f_name.starts_with(&prefix) {
+                        f_name = f_name.trim_end_matches(".elrc").trim_end_matches(".lrc");
+                        if let Ok(id) = f_name[prefix.len()..].parse::<i64>() {
+                            if !status.downloaded_ids.contains(&id) {
+                                status.downloaded_ids.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(status)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 
@@ -758,7 +960,10 @@ pub fn run() {
             server::stop_party_mode,
             server::remove_from_party_queue,
             server::broadcast_ws,
-            get_recommendations
+            get_recommendations,
+            search_lrclib,
+            apply_alternative_lyrics,
+            get_lyrics_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

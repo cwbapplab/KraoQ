@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw, Cpu, Monitor } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw, Cpu, Monitor, Check, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
@@ -205,6 +205,12 @@ function App() {
     const [activePartyId, setActivePartyId] = useState("");
     const [activePartyToken, setActivePartyToken] = useState("");
     const [queue, setQueue] = useState([]); // Array of { videoId, title, artists, status }
+    const [showLyricsSearch, setShowLyricsSearch] = useState(false);
+    const [lyricsSearchQuery, setLyricsSearchQuery] = useState("");
+    const [lyricsSearchResults, setLyricsSearchResults] = useState([]);
+    const [isSearchingLyrics, setIsSearchingLyrics] = useState(false);
+    const [targetVideoIdForLyrics, setTargetVideoIdForLyrics] = useState(null);
+    const [lyricsStatus, setLyricsStatus] = useState({ activeId: null, downloadedIds: [] });
 
     const [isReinstalling, setIsReinstalling] = useState(null); // id of dependency being reinstalled
     const [gpuStatus, setGpuStatus] = useState(null); // { status, message, torchVersion, ... }
@@ -369,6 +375,96 @@ function App() {
             alert(`Failed to reinstall ${id}: ${e}`);
         } finally {
             setIsReinstalling(null);
+        }
+    };
+
+    const openLyricsSearch = (videoId, defaultQuery) => {
+        setTargetVideoIdForLyrics(videoId);
+        setLyricsSearchQuery(defaultQuery || "");
+        setShowLyricsSearch(true);
+        invoke('get_lyrics_status', { videoId: videoId }).then(res => setLyricsStatus(res)).catch(e => console.error("Status error", e));
+        if (defaultQuery) {
+            handleLyricsSearch(defaultQuery, videoId);
+        }
+    };
+
+    const handleLyricsSearch = async (q, overrideVideoId = null) => {
+        setIsSearchingLyrics(true);
+        const searchTargetId = overrideVideoId || targetVideoIdForLyrics;
+        
+        try {
+            const results = await invoke('search_lrclib', { query: q });
+            let sortedResults = results;
+            
+            // Sort by duration proximity if searching for the currently playing song
+            if (audioRef.current && currentSong && (currentSong.videoId === searchTargetId || currentSong.video_id === searchTargetId)) {
+                const targetDuration = audioRef.current.duration;
+                if (targetDuration && targetDuration > 0) {
+                    sortedResults.sort((a, b) => Math.abs(a.songLength - targetDuration) - Math.abs(b.songLength - targetDuration));
+                }
+            }
+            
+            setLyricsSearchResults(sortedResults);
+        } catch (e) {
+            console.error("Lyrics search failed", e);
+        } finally {
+            setIsSearchingLyrics(false);
+        }
+    };
+
+    const confirmApplyLyrics = (result) => {
+        setConfirmModal({
+            isOpen: true,
+            title: "Apply Lyrics?",
+            message: `Do you want to apply lyrics for "${result.lrcName}"? This will trigger AI re-synchronization.`,
+            confirmText: "Yes, Apply",
+            cancelText: "Cancel",
+            onConfirm: () => applyAltLyrics(result.syncedLyrics || result.plainLyrics, result.id),
+            type: 'warning'
+        });
+    };
+
+    const applyAltLyrics = async (lyricsText, lrclibId) => {
+        // Auto close the search modal immediately on selection
+        setShowLyricsSearch(false);
+        
+        const wasInKaraoke = karaokeMode;
+        if (wasInKaraoke) {
+            setKaraokeMode(false);
+            if (audioRef.current) audioRef.current.pause();
+        }
+        
+        setStatus("Applying alternative lyrics...");
+        try {
+            const resStr = await invoke('apply_alternative_lyrics', { 
+                videoId: targetVideoIdForLyrics, 
+                lyricsText,
+                lrclibId
+            });
+            const res = JSON.parse(resStr);
+            
+            // If the song being updated is the current song, update the player state
+            if (currentSong && (currentSong.videoId === targetVideoIdForLyrics || currentSong.video_id === targetVideoIdForLyrics)) {
+                setLyricsData(res.data.segments);
+            }
+            
+            setConfirmModal({
+                isOpen: true,
+                title: "Success",
+                message: "Alternative lyrics applied and synchronized.",
+                type: 'default',
+                confirmText: wasInKaraoke ? 'Sing Now!' : 'Great',
+                onConfirm: () => {
+                    if (wasInKaraoke && currentSong) {
+                        processSong(currentSong, currentSong.thumbnail);
+                    }
+                }
+            });
+        } catch (e) {
+            console.error("Failed to apply lyrics", e);
+            alert("Error: " + e);
+        } finally {
+            setStatus("");
         }
     };
 
@@ -1523,6 +1619,29 @@ function App() {
 
     return (
         <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[1100px] mx-auto p-4 sm:p-8'}`}>
+            {/* DYNAMIC ISLAND STATUS */}
+            <AnimatePresence>
+                {status && (
+                    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] pointer-events-none">
+                        <motion.div
+                            initial={{ opacity: 0, y: -50, scale: 0.8 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -50, scale: 0.8 }}
+                            transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                        >
+                            <div className="bg-black/90 backdrop-blur-3xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.8)] rounded-[2rem] px-5 py-2.5 flex items-center justify-center gap-3 overflow-hidden group w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-2xl">
+                                <div className="relative flex items-center justify-center shrink-0">
+                                    <div className="absolute inset-0 bg-primary/20 blur-md rounded-full" />
+                                    <Loader2 size={16} className="text-primary animate-spin relative z-10" />
+                                </div>
+                                <span className="text-white text-xs sm:text-sm font-bold tracking-wide break-words text-center drop-shadow-md">
+                                    {status}
+                                </span>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
             {/* HEADER AREA */}
             {!karaokeMode && (
                 <header className={`p-6 mb-8 flex justify-between items-center transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : 'opacity-100'}`}>
@@ -1628,11 +1747,6 @@ function App() {
                                 <p className={`text-primary-hover text-base font-bold animate-pulse shrink-0 flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
                                     <Mic2 size={18} /> Preparing Your Stage...
                                 </p>
-                                {status && (
-                                    <p className={`text-sm tracking-wide text-white/50 bg-white/5 px-3 py-1 rounded-full animate-pulse whitespace-nowrap flex items-center gap-2 transition-opacity duration-300 ${transitionStage === 'fadeout' ? 'opacity-0' : 'opacity-100'}`}>
-                                        <ArrowRight size={14} className="opacity-50 text-white" /> {status}
-                                    </p>
-                                )}
                             </div>
                         )}
                     </div>
@@ -1971,6 +2085,19 @@ function App() {
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
+                                    const videoId = contextMenu.videoId;
+                                    const song = contextMenu.song;
+                                    setContextMenu({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
+                                    openLyricsSearch(videoId, `${song.artist} ${song.title}`);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-2.5 text-left text-white hover:bg-primary/20 transition-colors border-b border-white/10"
+                            >
+                                <Music size={14} className="text-primary" />
+                                <span className="font-medium text-sm">Alt Lyrics</span>
+                            </button>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
                                     setContextMenu({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
                                     removeFromRecent(contextMenu.videoId);
                                 }}
@@ -1991,7 +2118,7 @@ function App() {
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+                        className="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
                         onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
                     >
                         <motion.div
@@ -2251,17 +2378,30 @@ function App() {
 
                     {/* Back Button */}
                     {showControls && (
-                        <button
-                            className="absolute top-10 right-6 z-[100] bg-black/50 backdrop-blur-md p-3 rounded-full text-white/80 hover:text-white transition-all active:scale-90 border border-white/10 shadow-2xl"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                audioRef.current?.pause();
-                                setKaraokeMode(false);
-                            }}
-                            title="Close Player"
-                        >
-                            <X size={24} strokeWidth={3} />
-                        </button>
+                        <>
+                            <button
+                                className="absolute top-10 left-6 z-[100] bg-black/50 backdrop-blur-md p-3 rounded-full text-white/80 hover:text-white transition-all active:scale-90 border border-white/10 shadow-2xl"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    openLyricsSearch(currentSong.video_id || currentSong.videoId, `${currentSong.artist} ${currentSong.title}`);
+                                }}
+                                title="Alternative Lyrics"
+                            >
+                                <Music size={24} strokeWidth={2.5} />
+                            </button>
+
+                            <button
+                                className="absolute top-10 right-6 z-[100] bg-black/50 backdrop-blur-md p-3 rounded-full text-white/80 hover:text-white transition-all active:scale-90 border border-white/10 shadow-2xl"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    audioRef.current?.pause();
+                                    setKaraokeMode(false);
+                                }}
+                                title="Close Player"
+                            >
+                                <X size={24} strokeWidth={3} />
+                            </button>
+                        </>
                     )}
                 </div>
             )}
@@ -2640,6 +2780,129 @@ function App() {
                     <p className="text-[11px] text-white/30 uppercase tracking-[0.2em] mt-2">Connection updates live...</p>
                 </motion.div>
             )}
+
+            {/* LYRICS SEARCH MODAL */}
+            <AnimatePresence>
+                {showLyricsSearch && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl"
+                        onClick={() => setShowLyricsSearch(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                            className="bg-slate-900 border border-white/10 rounded-[2.5rem] shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/5">
+                                <div>
+                                    <h3 className="text-2xl font-black text-white tracking-tight">Alternative Lyrics</h3>
+                                    <p className="text-white/40 text-sm mt-1">Sourcing from lrclib.net</p>
+                                </div>
+                                <button
+                                    onClick={() => setShowLyricsSearch(false)}
+                                    className="p-3 rounded-full hover:bg-white/10 text-white/40 hover:text-white transition-all"
+                                >
+                                    <X size={24} />
+                                </button>
+                            </div>
+
+                            <div className="p-6 border-b border-white/5 bg-black/20">
+                                <div className="relative group">
+                                    <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-white/20 group-focus-within:text-primary transition-colors" size={20} />
+                                    <input
+                                        type="text"
+                                        value={lyricsSearchQuery}
+                                        onChange={(e) => setLyricsSearchQuery(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleLyricsSearch(lyricsSearchQuery)}
+                                        placeholder="Search artist or song title..."
+                                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-14 pr-6 text-white text-lg focus:outline-none focus:border-primary/50 transition-all font-medium"
+                                    />
+                                    <button 
+                                        onClick={() => handleLyricsSearch(lyricsSearchQuery)}
+                                        disabled={isSearchingLyrics}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 bg-primary hover:bg-primary-hover disabled:opacity-50 text-white px-5 py-2 rounded-xl text-sm font-black transition-all"
+                                    >
+                                        {isSearchingLyrics ? <Loader2 size={16} className="animate-spin" /> : "Search"}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto stylized-scrollbar p-6 space-y-3">
+                                {isSearchingLyrics && (
+                                    <div className="flex flex-col items-center justify-center py-20 gap-4">
+                                        <div className="relative">
+                                            <div className="w-16 h-16 rounded-full border-4 border-primary/20" />
+                                            <div className="absolute inset-0 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                                        </div>
+                                        <p className="text-white/60 font-bold animate-pulse">Scanning Global Databases...</p>
+                                    </div>
+                                )}
+
+                                {!isSearchingLyrics && lyricsSearchResults.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-20 text-white/20">
+                                        <Music size={64} strokeWidth={1} className="mb-4" />
+                                        <p className="text-lg font-bold italic">No alternative lyrics found.</p>
+                                        <p className="text-sm mt-1">Try a different search term.</p>
+                                    </div>
+                                )}
+
+                                {!isSearchingLyrics && [
+                                    ...lyricsSearchResults.filter(r => lyricsStatus.activeId === r.id),
+                                    ...lyricsSearchResults.filter(r => lyricsStatus.activeId !== r.id)
+                                ].map((result, idx) => (
+                                    <motion.div
+                                        key={idx}
+                                        initial={{ opacity: 0, x: -10 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ delay: idx * 0.05 }}
+                                        className="group bg-white/5 hover:bg-white/10 border border-white/5 hover:border-primary/30 rounded-2xl p-5 flex items-center justify-between transition-all cursor-pointer"
+                                        onClick={() => confirmApplyLyrics(result)}
+                                    >
+                                        <div className="flex-1 min-w-0 pr-4">
+                                            <h4 className="text-white font-black text-lg truncate group-hover:text-primary transition-colors">{result.lrcName}</h4>
+                                            <div className="flex items-center gap-3 mt-1.5">
+                                                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 text-[10px] font-black uppercase text-white/40 tracking-wider">
+                                                    <Maximize2 size={10} />
+                                                    {Math.floor(result.songLength / 60)}:{(result.songLength % 60).toString().padStart(2, '0')}
+                                                </div>
+                                                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-[10px] font-black uppercase text-emerald-400 tracking-wider">
+                                                    <Zap size={10} fill="currentColor" />
+                                                    Start: {result.firstWordTime ? `${result.firstWordTime.toFixed(1)}s` : "Unknown"}
+                                                </div>
+                                                {result.syncedLyrics && (
+                                                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 text-[10px] font-black uppercase text-primary-hover tracking-wider">
+                                                        Synced
+                                                    </div>
+                                                )}
+                                                {lyricsStatus.activeId === result.id && (
+                                                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/20 text-[10px] font-black uppercase text-blue-500 tracking-wider">
+                                                        <Check size={10} strokeWidth={3} />
+                                                        In Use
+                                                    </div>
+                                                )}
+                                                {lyricsStatus.downloadedIds.includes(result.id) && lyricsStatus.activeId !== result.id && (
+                                                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-500/20 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                                        <Download size={10} strokeWidth={3} />
+                                                        Downloaded
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <button className="p-3 rounded-xl bg-primary text-white opacity-0 group-hover:opacity-100 transition-all transform translate-x-4 group-hover:translate-x-0 shadow-lg shadow-primary/20">
+                                            <ArrowRight size={20} strokeWidth={3} />
+                                        </button>
+                                    </motion.div>
+                                ))}
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
 
     );
@@ -2783,6 +3046,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
                 ))}
             </span>
         </div>
+
     );
 }
 
