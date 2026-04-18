@@ -125,6 +125,9 @@ pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, party_na
                                  "queue": q
                              });
                              broadcast_ws(app_clone.clone(), msg).await;
+                             
+                             // Notify frontend so it can push a fresh sync_state
+                             let _ = app_clone.emit("party_client_joined", {});
                         },
                         "queue_add" => {
                              if let Ok(req) = serde_json::from_value::<QueueRequest>(json["payload"].clone()) {

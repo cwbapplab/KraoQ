@@ -494,7 +494,8 @@ function App() {
         if (!isPartyMode || !currentSong?.videoId || !activePartyId) return;
 
         const uploadMetadata = async () => {
-            const relayBase = partyUrl.split('/?')[0];
+            // Use HTTP for local/internal metadata sync to avoid self-signed cert issues with HTTPS in Tauri
+            const relayBase = partyUrl.split('/?')[0].replace("https://", "http://").replace(":3001", ":3000");
             const payload = {
                 partyId: activePartyId,
                 token: activePartyToken,
@@ -507,15 +508,16 @@ function App() {
             };
 
             try {
-                console.log(`[Party] Uploading metadata for ${currentSong.title} (${lyricsData?.length || 0} lines)`);
+                console.log(`[Party] Uploading metadata for ${currentSong.title} to ${relayBase} (${lyricsData?.length || 0} lines)`);
                 const res = await fetch(`${relayBase}/api/party/metadata`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 if (!res.ok) console.warn('[Party] Metadata upload failed:', res.status);
+                else console.log('[Party] Metadata uploaded successfully');
             } catch (e) {
-                console.error('[Party] Failed to upload metadata', e);
+                console.error('[Party] Failed to upload metadata to', relayBase, e);
             }
         };
 
@@ -564,6 +566,33 @@ function App() {
             clearInterval(interval);
         };
     }, [currentSong, isPlaying, karaokeMode, isPartyMode, lyricsData]);
+
+    // Listen for client joins to trigger immediate sync
+    useEffect(() => {
+        if (!isPartyMode) return;
+
+        const unlisten = listen('party_client_joined', () => {
+             console.log("[Party] Client joined notification received. Pushing fresh sync...");
+             const msg = {
+                type: 'sync_state',
+                payload: {
+                    currentSong: currentSong,
+                    isPlaying,
+                    isKaraokeMode: karaokeMode,
+                    currentTime: (audioRef.current && isFinite(audioRef.current.currentTime)) ? audioRef.current.currentTime : 0,
+                    duration: (audioRef.current && isFinite(audioRef.current.duration)) ? audioRef.current.duration : 0,
+                    singer: currentSong?.singer || "Host"
+                }
+            };
+            if (isTauri) {
+                invoke('broadcast_ws', { payload: msg }).catch(console.error);
+            }
+        });
+
+        return () => {
+            unlisten.then(f => f());
+        };
+    }, [isPartyMode, currentSong, isPlaying, karaokeMode, lyricsData]);
 
     // Sync Queue with Party Relay
     useEffect(() => {
@@ -2063,9 +2092,22 @@ function App() {
                             ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
                         `}>
                             {isPartyMode && !isPlaying && currentSong?.singer && (
-                                <div className="absolute top-[20%] left-1/2 -translate-x-1/2 text-center animate-in slide-in-from-top-4 duration-500">
-                                    <p className="text-primary-hover text-lg font-black tracking-[0.3em] uppercase mb-2 drop-shadow-sm">Time to Shine</p>
-                                    <h2 className="text-8xl font-black text-white drop-shadow-[0_0_25px_rgba(99,102,241,0.6)] tracking-tight">{currentSong.singer}</h2>
+                                <div className="absolute top-[18%] left-1/2 -translate-x-1/2 text-center animate-in slide-in-from-top-4 duration-500 w-full max-w-[90vw]">
+                                    <p className="text-primary-hover text-sm sm:text-lg font-black tracking-[0.3em] uppercase mb-4 drop-shadow-sm opacity-80">Time to Shine</p>
+                                    <h2 className="text-5xl sm:text-8xl font-black text-white drop-shadow-[0_0_25px_rgba(99,102,241,0.6)] tracking-tight truncate px-4">
+                                        {currentSong.singer}
+                                    </h2>
+                                    <div className="mt-8 flex flex-col items-center gap-2 animate-in fade-in slide-in-from-bottom-4 duration-1000 delay-300">
+                                        <div className="h-[1px] w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent mb-4" />
+                                        <p className="text-white/80 text-xl sm:text-4xl font-extrabold tracking-wide drop-shadow-xl max-w-4xl px-6 leading-tight">
+                                            {currentSong.title}
+                                        </p>
+                                        {currentSong.artist && (
+                                            <p className="text-white/40 text-sm sm:text-xl font-medium tracking-widest uppercase mt-2">
+                                                {currentSong.artist}
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 

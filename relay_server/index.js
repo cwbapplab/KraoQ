@@ -161,6 +161,11 @@ wss.on('connection', (ws, req) => {
                     return;
                 }
                 
+                // Cache the latest state for new joiners
+                if (data.type === 'sync_state') {
+                    party.lastState = data.payload;
+                }
+
                 // Otherwise broadcast state to clients
                 const msgString = JSON.stringify(data);
                 for (let clientWs of party.clients) {
@@ -217,7 +222,12 @@ wss.on('connection', (ws, req) => {
 
         console.log(`Client connected to party ${partyId} (Device: ${deviceId})`);
         
-        // Request sync state from Host
+        // 1. Immediately send the LATEST known state to this new client if we have it
+        if (party.lastState) {
+            ws.send(JSON.stringify({ type: 'sync_state', payload: party.lastState }));
+        }
+
+        // 2. Request a fresh sync from Host anyway
         if (party.hostWs && party.hostWs.readyState === 1) {
             party.hostWs.send(JSON.stringify({ type: 'client_joined' }));
         }
@@ -255,6 +265,7 @@ app.get('/api/recommendations', (req, res) => {
 });
 
 app.get('/api/lyrics', (req, res) => {
+    // This allows a direct fetch of lyrics if metadata cache is empty or stale
     proxyRestToHost(req, res, 'lyrics');
 });
 
@@ -287,7 +298,7 @@ function proxyRestToHost(req, res, actionType) {
     party.hostWs.send(JSON.stringify({
         type: actionType,
         id: reqId,
-        query: req.query.query || ''
+        query: req.query.query || req.query.video_id || ''
     }));
     
     // Cleanup if host doesn't reply in 30s

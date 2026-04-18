@@ -229,47 +229,59 @@
             // Fetch song metadata (lyrics) when track changes or lyrics view opened without data
             useEffect(() => {
                 const targetId = currentPlayback?.currentSong?.videoId;
-                if (!targetId || !partyId) return;
+                console.log(`[Metadata] Effect triggered. targetId: ${targetId}, partyId: ${partyId}, showLyrics: ${showLyrics}`);
+                
+                if (!targetId || !partyId) {
+                    console.log("[Metadata] Skipping fetch: missing targetId or partyId");
+                    return;
+                }
 
                 // If we already have lyrics for THIS specific song, no need to fetch again
-                if (currentPlayback.lyricsData && currentPlayback.lyricsData.length > 0 && currentPlayback.lyricsData[0]?.videoId === targetId) {
+                const hasLyrics = currentPlayback.lyricsData && currentPlayback.lyricsData.length > 0 && currentPlayback.lyricsData[0]?.videoId === targetId;
+                
+                // If we don't have lyrics and showLyrics is true, we MUST fetch.
+                // If we don't have lyrics and showLyrics is false, we can PRE-FETCH.
+                if (hasLyrics) {
+                    console.log("[Metadata] Already have lyrics for this song.");
                     return;
                 }
 
                 let attempts = 0;
+                const maxAttempts = showLyrics ? 5 : 2; // Be more persistent if user is actually looking at lyrics
+
                 const fetchMetadata = async () => {
-                    console.log(`[Metadata] Tracking ID ${targetId}. Fetching lyrics from API...`);
+                    console.log(`[Metadata] Fetching from /api/party/metadata?party_id=${partyId} (Attempt ${attempts + 1}/${maxAttempts})`);
                     try {
                         const response = await fetch(`/api/party/metadata?party_id=${partyId}`);
                         if (response.ok) {
                             const data = await response.json();
-                            if (data && data.lyrics && data.videoId === targetId) {
+                            if (data && data.lyrics && data.lyrics.length > 0 && data.videoId === targetId) {
                                 console.log(`[Metadata] Successfully received lyrics for ${targetId}`);
                                 setCurrentPlayback(prev => {
                                     if (prev?.currentSong?.videoId !== targetId) return prev;
-                                    // Attach the videoId to the segments for cache tracking
                                     const segmentsWithId = data.lyrics.map(s => ({ ...s, videoId: targetId }));
                                     return { ...prev, lyricsData: segmentsWithId };
                                 });
                                 return true;
                             } else {
-                                console.warn(`[Metadata] API returned data for ${data?.videoId}, but we need ${targetId}`);
+                                console.warn(`[Metadata] No lyrics in API response for ${targetId} yet (Video in API: ${data?.videoId})`);
                             }
                         } else {
-                            console.warn(`[Metadata] API returned status ${response.status}`);
+                            console.warn(`[Metadata] Fetch failed with status ${response.status}`);
                         }
                     } catch (e) {
-                        console.error('[Metadata] Fetch error:', e);
+                        console.error('[Metadata] Network error during fetch:', e);
                     }
                     return false;
                 };
 
                 const runFetch = async () => {
                     const success = await fetchMetadata();
-                    if (!success && attempts < 2) {
+                    if (!success && attempts < maxAttempts - 1) {
                         attempts++;
-                        console.log(`[Metadata] Fetch failed, retry ${attempts}/2 in 2s...`);
-                        setTimeout(runFetch, 2000);
+                        const delay = 1500 * attempts; 
+                        console.log(`[Metadata] Retrying in ${delay}ms...`);
+                        setTimeout(runFetch, delay);
                     }
                 };
 
