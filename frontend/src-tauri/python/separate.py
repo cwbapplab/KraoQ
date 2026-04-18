@@ -100,6 +100,28 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
             os.environ['PATH'] = bin_dir + os.pathsep + os.environ['PATH']
 
         audio_base = os.path.splitext(os.path.basename(audio_path))[0]
+        
+        # Check if separation products already exist
+        final_inst = os.path.join(output_dir, f"{audio_base}_(Instrumental).mp3")
+        final_voc = os.path.join(output_dir, f"{audio_base}_(Vocals).mp3")
+        elrc_file = os.path.join(output_dir, f"{audio_base}.elrc")
+
+        if os.path.exists(final_inst) and os.path.exists(final_voc) and not os.path.exists(elrc_file):
+            log_safe(f"Skipping separation: Instrumental and Vocals already exist for '{audio_base}' and .elrc is missing.")
+            result = {
+                "instrumental": os.path.basename(final_inst),
+                "vocals": os.path.basename(final_voc),
+                "files": [os.path.basename(final_inst), os.path.basename(final_voc)]
+            }
+            try:
+                with open(result_file, "w", encoding="utf-8") as f:
+                    json.dump(result, f)
+            except Exception as file_e:
+                log_safe(f"Failed to write existing result file: {file_e}")
+            
+            sys.__stdout__.write(json.dumps(result) + "\n")
+            sys.__stdout__.flush()
+            return
 
         def run_single_separation(preset_name, suffix):
             log_safe(f"Starting run for {suffix} (preset={preset_name})...")
