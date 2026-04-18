@@ -38,7 +38,14 @@ pub struct AppConfig {
     pub torch_version: String,
     pub cuda_version: String,
     pub ffmpeg_version: String,
+    #[serde(default = "default_instrumental_preset")]
+    pub instrumental_preset: String,
+    #[serde(default = "default_vocal_preset")]
+    pub vocal_preset: String,
 }
+
+fn default_instrumental_preset() -> String { "karaoke".to_string() }
+fn default_vocal_preset() -> String { "vocal_clean".to_string() }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -48,6 +55,8 @@ impl Default for AppConfig {
             torch_version: "2.5.1".to_string(),
             cuda_version: "12.1".to_string(),
             ffmpeg_version: "latest".to_string(),
+            instrumental_preset: default_instrumental_preset(),
+            vocal_preset: default_vocal_preset(),
         }
     }
 }
@@ -476,6 +485,8 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
             .arg(&result_file_path)
             .env("APP_DATA_DIR", app_dir.to_string_lossy().to_string())
             .env("GPU_ENABLED", gpu_env)
+            .env("INST_PRESET", &config.instrumental_preset)
+            .env("VOC_PRESET", &config.vocal_preset)
             .output()
             .await
             .map_err(|e| format!("Separation failed execution: {}", e))?;

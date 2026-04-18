@@ -101,22 +101,25 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
 
         audio_base = os.path.splitext(os.path.basename(audio_path))[0]
 
-        def run_single_separation(invert_spec, suffix):
-            log_safe(f"Starting run for {suffix} (invert_using_spec={invert_spec})...")
+        def run_single_separation(preset_name, suffix):
+            log_safe(f"Starting run for {suffix} (preset={preset_name})...")
             
-            # Create a separate instance for thread safety
-            sep = Separator(
-                log_level=logging.INFO, 
-                model_file_dir=uvr_model_dir,
-                output_dir=output_dir,
-                output_format='mp3',
-                invert_using_spec=invert_spec
-            )
-
-            # Apply GPU patch to the instance
-            if gpu_enabled:
+            if preset_name == "none":
+                # Force the usage of UVR-MDX-NET-Inst_HQ_5.onnx
+                invert_spec = True if suffix == "voc" else False
+                log_safe(f"Force running UVR-MDX-NET-Inst_HQ_5.onnx (invert_using_spec={invert_spec})...")
+                
+                sep = Separator(
+                    log_level=logging.INFO, 
+                    model_file_dir=uvr_model_dir,
+                    output_dir=output_dir,
+                    output_format='mp3',
+                    invert_using_spec=invert_spec
+                )
+                
+                # Apply GPU patch to avoid crashes if needed to instantiate raw model providers
                 available_providers = ort.get_available_providers()
-                if 'CUDAExecutionProvider' in available_providers:
+                if gpu_enabled and 'CUDAExecutionProvider' in available_providers:
                     sep.onnx_execution_provider = [
                         ("CUDAExecutionProvider", {"device_id": 0}),
                         "CPUExecutionProvider"
@@ -124,23 +127,26 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
                     import torch
                     if torch.cuda.is_available():
                         sep.torch_device = torch.device("cuda")
-                elif 'DmlExecutionProvider' in available_providers:
-                    sep.onnx_execution_provider = ["DmlExecutionProvider", "CPUExecutionProvider"]
-                else:
-                    sep.onnx_execution_provider = ["CPUExecutionProvider"]
+                
+                sep.load_model(model_filename="UVR-MDX-NET-Inst_HQ_5.onnx")
             else:
-                sep.onnx_execution_provider = ["CPUExecutionProvider"]
-                import torch
-                sep.torch_device = torch.device("cpu")
-
-            sep.load_model(model_filename=model_name)
+                # Create instance with the specified ensemble_preset
+                sep = Separator(
+                    log_level=logging.INFO, 
+                    model_file_dir=uvr_model_dir,
+                    output_dir=output_dir,
+                    output_format='mp3',
+                    ensemble_preset=preset_name
+                )
+                log_safe(f"Loading models for preset {preset_name}...")
+                sep.load_model()
             
             custom_names = {
                 "instrumental": f"{audio_base}_inst_{suffix}",
                 "vocals": f"{audio_base}_voc_{suffix}"
             }
             
-            log_safe(f"Running separation for {suffix}...")
+            log_safe(f"Running separation for {suffix} with preset {preset_name}...")
             output_files = sep.separate(audio_path, custom_output_names=custom_names)
             log_safe(f"Run {suffix} finished. Output files: {output_files}")
             
@@ -165,11 +171,12 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
                 "files": output_files
             }
 
+        inst_preset = os.getenv("INST_PRESET", "karaoke")
+        voc_preset = os.getenv("VOC_PRESET", "vocal_clean")
+
         with ThreadPoolExecutor(max_workers=2) as executor:
-            # Future 1: Standard (optimistic for instrumental)
-            fut_inst = executor.submit(run_single_separation, False, "inst")
-            # Future 2: Spec Invert (optimized for vocals)
-            fut_voc = executor.submit(run_single_separation, True, "voc")
+            fut_inst = executor.submit(run_single_separation, inst_preset, "inst")
+            fut_voc = executor.submit(run_single_separation, voc_preset, "voc")
 
             res_inst = fut_inst.result()
             res_voc = fut_voc.result()

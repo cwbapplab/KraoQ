@@ -1984,6 +1984,7 @@ function App() {
                                                 <LyricLine
                                                     line={line}
                                                     isActive={idx === activeLineIndex}
+                                                     isPassed={idx < activeLineIndex}
                                                     audioRef={audioRef}
                                                     displayNextText={displayNextText}
                                                     gap={wordGap}
@@ -2122,6 +2123,39 @@ function App() {
 
                                     {/* KARAOKE SECTION */}
                                     <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Karaoke</h3>
+                                    
+                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 space-y-3">
+                                        <div className="flex flex-col gap-1.5">
+                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Instrumental Preset</p>
+                                            <select
+                                                value={appConfig.instrumentalPreset || "karaoke"}
+                                                onChange={(e) => updateConfig({ ...appConfig, instrumentalPreset: e.target.value })}
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                            >
+                                                <option value="instrumental_clean" className="bg-slate-900">Instrumental Clean (Best, minimal bleed)</option>
+                                                <option value="instrumental_full" className="bg-slate-900">Instrumental Full (Max preservation)</option>
+                                                <option value="instrumental_balanced" className="bg-slate-900">Instrumental Balanced</option>
+                                                <option value="instrumental_low_resource" className="bg-slate-900">Instrumental Low Resource</option>
+                                                <option value="karaoke" className="bg-slate-900">Karaoke (Standard)</option>
+                                                <option value="none" className="bg-slate-900">UVR-MDX-NET Model Only (Force)</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex flex-col gap-1.5">
+                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Vocal Preset</p>
+                                            <select
+                                                value={appConfig.vocalPreset || "vocal_clean"}
+                                                onChange={(e) => updateConfig({ ...appConfig, vocalPreset: e.target.value })}
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                            >
+                                                <option value="vocal_clean" className="bg-slate-900">Vocal Clean (Minimal bleed)</option>
+                                                <option value="vocal_balanced" className="bg-slate-900">Vocal Balanced (Best quality)</option>
+                                                <option value="vocal_full" className="bg-slate-900">Vocal Full (Max capture)</option>
+                                                <option value="vocal_rvc" className="bg-slate-900">Vocal RVC (Optimize Training)</option>
+                                                <option value="none" className="bg-slate-900">UVR-MDX-NET Model Only (Force)</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
                                     <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
                                         <div className="flex items-center gap-4">
                                             <div className={`p-2.5 rounded-xl bg-primary/10 text-primary`}>
@@ -2393,7 +2427,7 @@ function parseLRC(lrcText) {
     return lyricsData;
 }
 
-function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, config, isFirst }) {
+function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, config, isFirst, isPassed }) {
     const wordRefs = React.useRef([]);
     const containerRef = React.useRef(null);
     const progressBarRef = React.useRef(null);
@@ -2499,7 +2533,12 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
                         style={{
                             margin: '0 5px',
                             display: 'inline-block',
-                            color: isActive ? 'rgba(255,255,255,0.4)' : '#fff'
+                            color: isPassed ? '#a5b4fc' : 'rgba(255,255,255,0.4)',
+                            backgroundImage: !isActive ? 'none' : undefined,
+                            webkitBackgroundClip: !isActive ? 'unset' : undefined,
+                            webkitTextFillColor: !isActive ? (isPassed ? '#a5b4fc' : 'rgba(255,255,255,0.4)') : undefined,
+                            transform: !isActive ? 'scale(1.0)' : undefined,
+                            textShadow: !isActive ? 'none' : undefined
                         }}
                     >
                         {w.word}
