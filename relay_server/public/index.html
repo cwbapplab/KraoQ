@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KraoQ Party Mode</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: #020617;
+            /* slate-950 */
+            color: white;
+            overflow-x: hidden;
+        }
+
+        .glass {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#6366f1', // indigo-500
+                        accent: '#ec4899',   // pink-500
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="p-4 sm:p-6 flex flex-col items-center min-h-screen">
+    <div id="app" class="w-full max-w-md flex flex-col gap-6"></div>
+
+    <!-- Preact and HTM -->
+    <script type="module">
+        import { h, render } from 'https://esm.sh/preact';
+        import { useState, useEffect, useRef } from 'https://esm.sh/preact/hooks';
+        import htm from 'https://esm.sh/htm';
+
+        const html = htm.bind(h);
+
+        function App() {
+            const [query, setQuery] = useState('');
+            const [results, setResults] = useState([]);
+            const [suggestions, setSuggestions] = useState([]);
+            const [recommendations, setRecommendations] = useState([]);
+            const [isSearching, setIsSearching] = useState(false);
+            const [status, setStatus] = useState('');
+            const [showSuggestions, setShowSuggestions] = useState(false);
+            const [confirmSong, setConfirmSong] = useState(null);
+            const [reconnectAttempts, setReconnectAttempts] = useState(0);
+            const [singer, setSinger] = useState(localStorage.getItem('singer') || '');
+            const [liveQueue, setLiveQueue] = useState([]);
+            const [currentPlayback, setCurrentPlayback] = useState(null);
+            const [deviceId] = useState(() => {
+                let id = localStorage.getItem('deviceId');
+                if (!id) {
+                    id = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(16);
+                    localStorage.setItem('deviceId', id);
+                }
+                return id;
+            });
+            const [showLyrics, setShowLyrics] = useState(false);
+            const [localTime, setLocalTime] = useState(0);
+            const [isFullscreen, setIsFullscreen] = useState(false);
+            const [showFullscreenHint, setShowFullscreenHint] = useState(true);
+            const wsRef = useRef(null);
+            const lyricsContainerRef = useRef(null);
+
+            const currentTime = localTime + 0.5; // 200ms advance offset for relay latency
+            const lyrics = currentPlayback?.lyricsData || [];
+            const activeLineIndex = lyrics.findIndex((line, i) => {
+                const words = line.words || [];
+                const start = words.length > 0 ? words[0].start : (line.time || 0);
+                const nextLine = lyrics[i + 1];
+                const nextStart = nextLine ? (nextLine.words && nextLine.words.length > 0 ? nextLine.words[0].start : (nextLine.time || 999999)) : 999999;
+                return currentTime >= start && currentTime < nextStart;
+            });
+
+            // Auto-scroll lyrics
+            useEffect(() => {
+                if (showLyrics && lyricsContainerRef.current) {
+                    const activeElement = lyricsContainerRef.current.querySelector('[data-active="true"]');
+                    if (activeElement) {
+                        activeElement.scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'center'
+                        });
+                    }
+                }
+            }, [activeLineIndex, showLyrics]);
+
+            const toggleFullscreen = () => {
+                const elem = document.documentElement;
+                try {
+                    if (!document.fullscreenElement && !document.webkitFullscreenElement && !document.mozFullScreenElement && !document.msFullscreenElement) {
+                        const request = elem.requestFullscreen || elem.webkitRequestFullscreen || elem.mozRequestFullScreen || elem.msRequestFullscreen;
+                        if (request) {
+                            request.call(elem);
+                            setIsFullscreen(true);
+                            setShowFullscreenHint(false);
+                        } else {
+                            setStatus("Fullscreen not supported on this browser.");
+                            setTimeout(() => setStatus(""), 3000);
+                        }
+                    } else {
+                        const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+                        if (exit) {
+                            exit.call(document);
+                            setIsFullscreen(false);
+                        }
+                    }
+                } catch (err) {
+                    console.error(err);
+                    setStatus("Fullscreen failed: " + err.message);
+                }
+            };
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const partyId = urlParams.get('party_id') || '';
+            const token = urlParams.get('token') || '';
+
+            useEffect(() => {
+                localStorage.setItem('singer', singer);
+            }, [singer]);
+
+
+            // Official Screen Wake Lock API Management with GPU/Media Heartbeats
+            const [wakeLockStatus, setWakeLockStatus] = useState('Off');
+            const wakeLockRef = useRef(null);
+
+            const acquireWakeLock = async () => {
+                if (!('wakeLock' in navigator)) {
+                    setWakeLockStatus('Not Supported');
+                    return;
+                }
+
+                try {
+                    if (wakeLockRef.current) await wakeLockRef.current.release();
+                    const lock = await navigator.wakeLock.request('screen');
+                    wakeLockRef.current = lock;
+                    setWakeLockStatus('Active');
+
+                    // 1. GPU Heartbeat: Draw to an invisible canvas to keep GPU active
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvas.height = 1;
+                    const ctx = canvas.getContext('2d');
+                    const heartbeat = () => {
+                         ctx.fillStyle = `rgb(${Math.random()*255},0,0)`;
+                         ctx.fillRect(0,0,1,1);
+                         if (wakeLockRef.current) requestAnimationFrame(heartbeat);
+                    };
+                    heartbeat();
+
+                    // 2. Media Session Heartbeat: Trick OS media engine
+                    if ('mediaSession' in navigator) {
+                        navigator.mediaSession.playbackState = 'playing';
+                        const updateMedia = () => {
+                             if (!wakeLockRef.current) return;
+                             navigator.mediaSession.setPositionState?.({
+                                 duration: 3600,
+                                 playbackRate: 1,
+                                 position: Math.floor(Date.now() / 1000) % 3600
+                             });
+                             setTimeout(updateMedia, 1000);
+                        };
+                        updateMedia();
+                    }
+
+                    lock.addEventListener('release', () => {
+                        if (document.visibilityState === 'visible') acquireWakeLock();
+                        else setWakeLockStatus('Off');
+                    });
+                } catch (err) {
+                    setWakeLockStatus(`Error: ${err.name}`);
+                }
+            };
+
+            // Lifecycle: re-acquire on visibility change (Mobile browsers drop lock on tab switch)
+            useEffect(() => {
+                const handleVisibility = () => {
+                    if (document.visibilityState === 'visible' && wakeLockStatus !== 'Off') {
+                        acquireWakeLock();
+                    }
+                };
+                window.addEventListener('visibilitychange', handleVisibility);
+                window.addEventListener('focus', handleVisibility);
+                return () => {
+                    window.removeEventListener('visibilitychange', handleVisibility);
+                    window.removeEventListener('focus', handleVisibility);
+                    if (wakeLockRef.current) wakeLockRef.current.release();
+                };
+            }, [wakeLockStatus]);
+
+            const [isStayAwakeActive, setIsStayAwakeActive] = useState(false);
+            const activateStayAwake = async () => {
+                setIsStayAwakeActive(true);
+                await acquireWakeLock();
+            };
+
+            // Local time ticker to extrapolate progress between infrequent server syncs
+            useEffect(() => {
+                let interval;
+                if (currentPlayback && currentPlayback.isPlaying) {
+                    setLocalTime(currentPlayback.currentTime);
+                    const syncReceivedAt = Date.now();
+                    const baseTime = currentPlayback.currentTime;
+
+                    interval = setInterval(() => {
+                        const elapsedSinceSync = (Date.now() - syncReceivedAt) / 1000;
+                        setLocalTime(baseTime + elapsedSinceSync);
+                    }, 500);
+                } else {
+                    setLocalTime(currentPlayback?.currentTime || 0);
+                }
+                return () => clearInterval(interval);
+            }, [currentPlayback]);
+
+            // Fetch song metadata (lyrics) when track changes or lyrics view opened without data
+            useEffect(() => {
+                const targetId = currentPlayback?.currentSong?.videoId;
+                if (!targetId || !partyId) return;
+
+                // If we already have lyrics for THIS specific song, no need to fetch again
+                if (currentPlayback.lyricsData && currentPlayback.lyricsData.length > 0 && currentPlayback.lyricsData[0]?.videoId === targetId) {
+                    return;
+                }
+
+                let attempts = 0;
+                const fetchMetadata = async () => {
+                    console.log(`[Metadata] Tracking ID ${targetId}. Fetching lyrics from API...`);
+                    try {
+                        const response = await fetch(`/api/party/metadata?party_id=${partyId}`);
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data && data.lyrics && data.videoId === targetId) {
+                                console.log(`[Metadata] Successfully received lyrics for ${targetId}`);
+                                setCurrentPlayback(prev => {
+                                    if (prev?.currentSong?.videoId !== targetId) return prev;
+                                    // Attach the videoId to the segments for cache tracking
+                                    const segmentsWithId = data.lyrics.map(s => ({ ...s, videoId: targetId }));
+                                    return { ...prev, lyricsData: segmentsWithId };
+                                });
+                                return true;
+                            } else {
+                                console.warn(`[Metadata] API returned data for ${data?.videoId}, but we need ${targetId}`);
+                            }
+                        } else {
+                            console.warn(`[Metadata] API returned status ${response.status}`);
+                        }
+                    } catch (e) {
+                        console.error('[Metadata] Fetch error:', e);
+                    }
+                    return false;
+                };
+
+                const runFetch = async () => {
+                    const success = await fetchMetadata();
+                    if (!success && attempts < 2) {
+                        attempts++;
+                        console.log(`[Metadata] Fetch failed, retry ${attempts}/2 in 2s...`);
+                        setTimeout(runFetch, 2000);
+                    }
+                };
+
+                runFetch();
+            }, [currentPlayback?.currentSong?.videoId, partyId, showLyrics]);
+
+            // WebSocket for Queue and Status Sync
+            useEffect(() => {
+                if (!partyId) {
+                    setStatus('Missing Party ID');
+                    return;
+                }
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/api/ws?party_id=${partyId}&token=${token}&role=client&device_id=${deviceId}`;
+
+                const ws = new WebSocket(wsUrl);
+                wsRef.current = ws;
+
+                ws.onopen = () => console.log('Connected to Party Relay');
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('Party Sync Received:', data.type, data);
+                        if (data.type === 'sync_queue') {
+                            setLiveQueue(data.queue || []);
+                        } else if (data.type === 'sync_state') {
+                            setCurrentPlayback(prev => {
+                                // Smart merge: preserve old lyrics if not provided in this update
+                                const newPayload = { ...prev, ...data.payload };
+                                if (prev?.currentSong && data.payload.currentSong) {
+                                    newPayload.currentSong = { ...prev.currentSong, ...data.payload.currentSong };
+                                }
+                                if (!data.payload.lyricsData && prev?.lyricsData) {
+                                    newPayload.lyricsData = prev.lyricsData;
+                                }
+                                return newPayload;
+                            });
+                        } else if (data.type === 'queue_add') {
+                            setLiveQueue(prev => {
+                                if (prev.find(i => (i.videoId || i.video_id) === (data.payload.videoId || data.payload.video_id) && i.deviceId === data.payload.deviceId)) return prev;
+                                return [...prev, data.payload];
+                            });
+                        } else if (data.type === 'queue_remove') {
+                            setLiveQueue(prev => prev.filter(i => !((i.videoId || i.video_id) === (data.payload.videoId || data.payload.video_id) && i.deviceId === data.payload.deviceId)));
+                        } else if (data.type === 'singer_alert') {
+                            // Dynamic notification for the singer
+                            const alertDiv = document.createElement('div');
+                            alertDiv.className = 'fixed inset-0 z-[200] flex items-center justify-center p-6 bg-primary/95 backdrop-blur-xl animate-in fade-in duration-500';
+                            alertDiv.innerHTML = `
+                                <div class="text-center flex flex-col items-center gap-6 max-w-xs animate-in zoom-in duration-500">
+                                    <div class="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center animate-bounce">
+                                        <i data-lucide="mic" class="w-10 h-10 text-white"></i>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <h2 class="text-3xl font-black text-white uppercase tracking-tighter italic">Your Turn!</h2>
+                                        <p class="text-indigo-200 font-bold uppercase text-[10px] tracking-widest">Get ready to shine</p>
+                                    </div>
+                                    <div class="glass p-4 rounded-3xl w-full border border-white/20 shadow-2xl">
+                                        <img src="https://img.youtube.com/vi/${data.song.videoId}/mqdefault.jpg" class="w-full aspect-video rounded-xl object-cover mb-3 shadow-lg" />
+                                        <h3 class="text-white font-bold truncate text-sm px-2">${data.song.title}</h3>
+                                    </div>
+                                    <button class="mt-4 px-10 py-4 bg-white text-primary rounded-full font-black uppercase text-xs tracking-widest shadow-xl active:scale-95 transition-transform hover:bg-slate-100 ring-4 ring-white/10">
+                                        Let's Go!
+                                    </button>
+                                </div>
+                             `;
+                            document.body.appendChild(alertDiv);
+                            if (window.lucide) {
+                                try {
+                                    lucide.createIcons();
+                                } catch (e) { }
+                            }
+
+                            const dismiss = () => {
+                                alertDiv.style.opacity = '0';
+                                alertDiv.style.transition = 'opacity 0.5s';
+                                setTimeout(() => alertDiv.remove(), 500);
+                            };
+                            alertDiv.querySelector('button').onclick = dismiss;
+                            setTimeout(dismiss, 12000);
+                        } else if (data.error) {
+                            setStatus(data.error);
+                        }
+                    } catch (e) { console.error('WS msg error', e); }
+                };
+
+                ws.onclose = () => {
+                    setStatus('Disconnected from Host. Reconnecting...');
+                    setTimeout(() => setReconnectAttempts(prev => prev + 1), 3000);
+                };
+                ws.onerror = () => {
+                    setStatus('Connection error. Retrying...');
+                    ws.close();
+                };
+
+                return () => ws.close();
+            }, [partyId, token, reconnectAttempts]);
+
+            // Fetch Recommendations on mount
+            useEffect(() => {
+                if (!partyId) return;
+                const fetchRecs = async () => {
+                    try {
+                        const res = await fetch(`/api/recommendations?party_id=${partyId}&token=${token}`);
+                        const data = await res.json();
+                        if (Array.isArray(data)) setRecommendations(data);
+                    } catch (e) { console.error(e); }
+                };
+                fetchRecs();
+            }, [partyId, token]);
+
+            // Auto-hide hint after 8 seconds
+            useEffect(() => {
+                const timer = setTimeout(() => setShowFullscreenHint(false), 8000);
+                return () => clearTimeout(timer);
+            }, []);
+
+            // Refresh Lucide icons on any state change that renders new icons
+            useEffect(() => {
+                if (window.lucide) {
+                    lucide.createIcons();
+                }
+            }, [results, liveQueue, currentPlayback, isFullscreen, recommendations, confirmSong]);
+
+
+
+            // Fetch Suggestions
+            useEffect(() => {
+                const timer = setTimeout(async () => {
+                    if (query && query.length > 2) {
+                        try {
+                            const res = await fetch(`/api/suggestions?query=${encodeURIComponent(query)}&party_id=${partyId}&token=${token}`);
+                            const data = await res.json();
+                            if (!data.error) setSuggestions(data);
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    } else {
+                        setSuggestions([]);
+                    }
+                }, 300);
+                return () => clearTimeout(timer);
+            }, [query]);
+
+            const searchMusic = async () => {
+                if (!query) return;
+                setIsSearching(true);
+                setShowSuggestions(false);
+                setStatus('');
+                try {
+                    const res = await fetch(`/api/search?query=${encodeURIComponent(query)}&party_id=${partyId}&token=${token}`);
+                    const data = await res.json();
+                    if (data.error) throw new Error(data.error);
+                    setResults(data);
+                } catch (e) {
+                    setStatus('Search Failed: ' + e.message);
+                } finally {
+                    setIsSearching(false);
+                }
+            };
+
+            const addToQueue = async (video) => {
+                const singerClean = singer.trim();
+                if (!singerClean) {
+                    setStatus('Please enter your name above!');
+                    return;
+                }
+                try {
+                    setStatus(`Adding "${video.title}"...`);
+                    if (wsRef.current && wsRef.current.readyState === 1) {
+                        wsRef.current.send(JSON.stringify({
+                            type: 'queue_add',
+                            payload: {
+                                videoId: video.videoId,
+                                title: video.title,
+                                artists: video.artists || video.channel,
+                                thumbnail: video.thumbnail,
+                                singer: singerClean,
+                                deviceId: deviceId
+                            }
+                        }));
+                        setStatus(`Added to Queue!`);
+                        setQuery('');
+                        setResults([]);
+                        setTimeout(() => setStatus(''), 3000);
+                    } else {
+                        throw new Error('Websocket disconnected');
+                    }
+                } catch (e) { setStatus('Error: ' + e.message); }
+            };
+
+            const removeFromQueue = async (item) => {
+                try {
+                    setStatus(`Removing "${item.title}"...`);
+                    if (wsRef.current && wsRef.current.readyState === 1) {
+                        wsRef.current.send(JSON.stringify({
+                            type: 'queue_remove',
+                            payload: {
+                                videoId: item.videoId || item.video_id,
+                                deviceId: deviceId
+                            }
+                        }));
+                        setStatus(`Removed!`);
+                        setTimeout(() => setStatus(''), 2000);
+                    } else {
+                        throw new Error('Websocket disconnected');
+                    }
+                } catch (e) { setStatus('Error: ' + e.message); }
+            };
+
+            const nowPlaying = currentPlayback && currentPlayback.currentSong ? currentPlayback.currentSong : null;
+            const upNext = liveQueue;
+
+            return html`
+                <div class="flex flex-col gap-4">
+                    <!-- Fullscreen Prompt -->
+                    ${showFullscreenHint && !isFullscreen && html`
+                        <div class="w-full bg-primary/20 border border-primary/30 rounded-2xl p-4 flex items-center justify-between mb-2 animate-in slide-in-from-top duration-500 overflow-hidden">
+                             <div class="flex items-center gap-3">
+                                <div class="w-8 h-8 rounded-full bg-primary/40 flex items-center justify-center">
+                                    <i data-lucide="sparkles" class="w-4 h-4 text-white animate-pulse"></i>
+                                </div>
+                                <div class="flex flex-col">
+                                    <span class="text-[11px] font-bold text-white uppercase tracking-wider">Better Experience</span>
+                                    <span class="text-[9px] text-white/60">Tap the icon to go Fullscreen</span>
+                                </div>
+                             </div>
+                             <div class="flex items-center gap-3">
+                                <i data-lucide="arrow-down" class="w-5 h-5 text-accent animate-bounce"></i>
+                             </div>
+                        </div>
+                    `}
+
+                    <!-- Join Overlay (Forces User Activation for Wake Lock) -->
+                    ${!isStayAwakeActive && html`
+                        <div class="fixed inset-0 z-[2000] bg-black/95 backdrop-blur-3xl flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-500">
+                             <div class="w-24 h-24 rounded-full bg-primary/20 flex items-center justify-center mb-8 animate-pulse">
+                                  <i data-lucide="mic-2" class="w-10 h-10 text-primary"></i>
+                             </div>
+                             <h2 class="text-3xl font-black text-white mb-4 tracking-tighter">Ready to Rock?</h2>
+                             <p class="text-slate-400 mb-10 text-sm font-medium leading-relaxed max-w-[260px]">
+                                Tap below to join the party and activate "Stay Awake" protection for your session.
+                             </p>
+                             <button 
+                                 onClick=${activateStayAwake}
+                                 class="w-full max-w-[240px] py-5 rounded-2xl bg-primary text-white font-black text-lg shadow-[0_10px_40px_rgba(244,63,94,0.3)] hover:scale-105 active:scale-95 transition-all"
+                             >
+                                 JOIN PARTY
+                             </button>
+                             <p class="mt-8 text-[10px] text-slate-600 font-bold uppercase tracking-[0.2em]">KraoQ Party Relay</p>
+                        </div>
+                    `}
+
+                    <!-- Header -->
+                    <div class="relative flex items-center justify-between mb-2 mt-2">
+                        <div class="flex-1 flex items-center gap-2">
+                             <div class="glass h-9 px-3 flex items-center justify-center rounded-xl border border-white/10 shadow-lg">
+                                <span class="text-white font-black tracking-widest text-[9px] uppercase">${partyId}</span>
+                            </div>
+                        </div>
+                        <div class="flex-1 text-center">
+                            <h1 class="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary via-accent to-primary leading-none">
+                                KraoQ
+                            </h1>
+                        </div>
+                        <div class="flex-1 flex justify-end items-center gap-2">
+                            ${isStayAwakeActive && html`
+                                <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 group animate-in slide-in-from-right duration-500">
+                                    <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                                    <span class="text-[10px] font-bold text-emerald-500 uppercase tracking-tighter">Stay Awake: ${wakeLockStatus}</span>
+                                </div>
+                            `}
+                            <button 
+                                onClick=${toggleFullscreen}
+                                class="p-2 text-slate-500 hover:text-white transition-colors z-[60] active:scale-125"
+                                title="Toggle Fullscreen"
+                            >
+                                <i data-lucide=${isFullscreen ? "minimize" : "maximize"} class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Playing Now Card -->
+                    ${currentPlayback && currentPlayback.currentSong ? html`
+                        <div 
+                            onClick=${() => setShowLyrics(true)}
+                            class="relative animate-in zoom-in-95 fade-in duration-500 cursor-pointer active:scale-[0.98] transition-all"
+                        >
+                             <div class="absolute -inset-0.5 bg-gradient-to-r from-primary to-accent rounded-[2rem] blur opacity-20"></div>
+                             <div class="relative glass rounded-[2rem] overflow-hidden border border-white/20 p-4 shadow-xl">
+                                <div class="flex items-center gap-5">
+                                    <div class="relative w-20 h-20 rounded-2xl overflow-hidden shadow-2xl shrink-0">
+                                        <img src="${currentPlayback.currentSong.thumbnail}" class="w-full h-full object-cover" />
+                                        ${currentPlayback.isPlaying && html`
+                                            <div class="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                                <div class="flex gap-1 items-end h-4">
+                                                    <div class="w-1 bg-accent animate-music-bar-1"></div>
+                                                    <div class="w-1 bg-accent animate-music-bar-2"></div>
+                                                    <div class="w-1 bg-accent animate-music-bar-3"></div>
+                                                </div>
+                                            </div>
+                                        `}
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center gap-2 mb-1.5">
+                                            <span class="bg-emerald-500/20 text-emerald-400 text-[8px] font-black px-2 py-0.5 rounded-md border border-emerald-500/20 uppercase tracking-widest">
+                                                Live Now
+                                            </span>
+                                            <span class="text-slate-500 text-[9px] font-bold uppercase tracking-tighter">
+                                                🎙️ ${currentPlayback.singer || 'Host'}
+                                            </span>
+                                        </div>
+                                        <h3 class="text-white font-black truncate text-base tracking-tight leading-tight">${currentPlayback.currentSong.title}</h3>
+                                        <p class="text-slate-400 text-xs truncate font-medium">${currentPlayback.currentSong.artist}</p>
+                                        <div class="h-1 bg-white/10 rounded-full mt-2 overflow-hidden">
+                                            <div class="h-full bg-primary transition-all duration-300" style="width: ${Math.min(100, (localTime / (currentPlayback.duration || 240)) * 100)}%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                             </div>
+                        </div>
+                    ` : html`
+                        <div class="glass p-4 rounded-[2rem] flex items-center justify-center border border-white/5 opacity-40">
+                             <p class="text-[9px] text-white/50 uppercase font-black tracking-[0.2em]">Waiting for Host...</p>
+                        </div>
+                    `}
+
+                    <!-- Singer Input -->
+                    <div class="glass p-1 rounded-full flex items-center shadow-lg border ${!singer.trim() ? 'border-primary/40' : 'border-white/10'} transition-all">
+                        <i data-lucide="user" class="text-primary ml-4 w-5 h-5"></i>
+                        <input
+                            type="text"
+                            class="w-full bg-transparent p-3 text-white focus:outline-none placeholder:text-slate-500 font-semibold text-sm"
+                            placeholder="Your Name (Required to Sing)"
+                            value=${singer}
+                            onInput=${(e) => setSinger(e.target.value)}
+                        />
+                    </div>
+
+
+                    <!-- Search Input -->                   
+                    
+                    <div class="relative">
+                        <div class="glass p-1 rounded-full flex items-center shadow-lg border border-white/10">
+                            <i data-lucide="search" class="text-slate-400 ml-4 w-5 h-5"></i>
+                            <input
+                                type="text"
+                                class="w-full bg-transparent p-3 text-white focus:outline-none placeholder:text-slate-500"
+                                placeholder="Search Songs..."
+                                value=${query}
+                                onInput=${(e) => { setQuery(e.target.value); setShowSuggestions(true); }}
+                                onKeyDown=${(e) => e.key === 'Enter' && searchMusic()}
+                            />
+                            <button
+                                onClick=${searchMusic}
+                                class="aspect-square p-3 bg-gradient-to-r from-primary to-accent text-white rounded-full flex items-center justify-center font-bold active:scale-95 transition-transform"
+                            >
+                                <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+
+                        <!-- Suggestions -->
+                        ${showSuggestions && suggestions.length > 0 && html`
+                            <div class="absolute top-full left-0 right-0 mt-2 glass rounded-2xl overflow-hidden shadow-2xl z-50">
+                                ${suggestions.map(s => html`
+                                    <div
+                                        onClick=${() => { addToQueue(s); setShowSuggestions(false); }}
+                                        class="p-4 hover:bg-white/5 cursor-pointer flex items-center gap-3 border-b border-white/5 last:border-0"
+                                    >
+
+                                        <img src=${s.thumbnail} class="w-10 h-10 rounded-lg object-cover" />
+                                        <div class="flex-1 truncate">
+                                            <p class="text-sm font-semibold truncate text-white">${s.title}</p>
+                                            <p class="text-xs text-slate-400 truncate">${s.artists}</p>
+                                        </div>
+                                    </div>
+                                `)}
+                            </div>
+                        `}
+                    </div>
+
+                    <!-- Status Banner -->
+                    ${status && html`
+                        <div class="p-3 bg-white/5 border border-white/10 rounded-xl text-center text-sm font-medium animate-pulse">
+                            ${status}
+                        </div>
+                    `}
+
+
+
+                    <!-- Recommendations -->
+                    ${recommendations.length > 0 && !query && html`
+                        <div class="mt-4">
+                            <div class="flex items-center gap-2 mb-3">
+                                <i data-lucide="sparkles" class="w-4 h-4 text-accent animate-pulse"></i>
+                                <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Classic Hits</h3>
+                            </div>
+                            <div class="flex gap-4 overflow-x-auto pb-4 no-scrollbar -mx-4 px-4 mask-fade-right">
+                                ${recommendations.map(song => html`
+                                    <div class="flex-shrink-0 w-32 group cursor-pointer" onClick=${() => setConfirmSong(song)}>
+                                        <div class="relative aspect-square rounded-2xl overflow-hidden mb-2 shadow-lg group-active:scale-95 transition-all">
+                                            <img src="https://img.youtube.com/vi/${song.videoId}/mqdefault.jpg" class="w-full h-full object-cover" />
+                                            <div class="absolute inset-0 bg-primary/20 group-hover:bg-primary/40 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                                <i data-lucide="plus" class="w-8 h-8 text-white scale-0 group-hover:scale-100 transition-transform"></i>
+                                            </div>
+                                        </div>
+                                        <h4 class="text-[10px] font-bold text-white truncate px-1">${song.title}</h4>
+                                        <p class="text-[9px] text-slate-500 truncate px-1">${song.artist}</p>
+                                    </div>
+                                `)}
+                            </div>
+                        </div>
+                    `}
+                    <!-- Live Queue -->
+                    ${upNext.length > 0 && html`
+                        <div class="flex flex-col gap-2">
+                             <div class="flex items-center gap-2 px-1">
+                                  <i data-lucide="list-video" class="w-4 h-4 text-accent"></i>
+                                  <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">Up Next (${upNext.length})</h3>
+                             </div>
+                             <div class="flex flex-col gap-2">
+                                  ${upNext.map(item => html`
+                                      <div class="glass p-3 rounded-xl flex items-center justify-between shadow border-l-2 border-l-accent animate-in slide-in-from-top-1">
+                                           <div class="truncate flex-1">
+                                                <h4 class="font-bold text-sm truncate text-white">${item.title}</h4>
+                                                <p class="text-[10px] text-slate-400">Singer: <span class="text-accent font-black tracking-wide">${item.singer}</span></p>
+                                           </div>
+                                            ${item.deviceId === deviceId && html`
+                                               <button onClick=${() => removeFromQueue(item)} class="p-2 rounded-lg hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-all active:scale-95" title="Remove my song">
+                                                   <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                               </button>
+                                           `}
+
+                                      </div>
+
+                                  `)}
+                             </div>
+                        </div>
+                    `}
+
+                    <!-- Absolute Full list of Results -->
+
+                    <div class="flex flex-col gap-3 min-h-[50vh]">
+                        ${isSearching && html`
+                            <div class="flex flex-col items-center justify-center p-12 text-slate-500">
+                                <span class="animate-spin h-8 w-8 border-4 border-slate-700 border-t-primary rounded-full mb-3"></span>
+                                <span class="text-sm font-medium">Searching Stage...</span>
+                            </div>
+                        `}
+
+                        ${!isSearching && results.map(video => html`
+                            <div class="glass p-3 rounded-2xl flex items-center gap-3 shadow-md hover:bg-white/5 transition-colors">
+                                <img
+                                    src=${video.thumbnail}
+                                    class="w-16 h-16 rounded-xl object-cover shadow"
+                                    onerror=${(e) => { e.target.src = 'https://music.youtube.com/img/on_platform_logo_dark.svg'; }}
+                                />
+                                <div class="flex-1 truncate">
+                                    <h4 class="font-bold text-sm truncate text-white">${video.title}</h4>
+                                    <p class="text-xs text-slate-400 truncate">${video.artists || video.channel}</p>
+                                </div>
+                                <button
+                                    onClick=${() => addToQueue(video)}
+                                    class="p-3 rounded-xl bg-white/5 hover:bg-primary hover:text-white transition-all active:scale-95 text-primary"
+                                >
+                                    <i data-lucide="plus" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        `)}
+                    </div>
+                    
+                    <!-- Confirmation Modal -->
+                    ${confirmSong && html`
+                        <div class="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
+                            <div class="glass p-6 rounded-[2.5rem] w-full max-w-sm border border-white/20 shadow-2xl flex flex-col items-center gap-6 animate-in zoom-in-95 duration-300">
+                                <div class="relative w-32 h-32 rounded-3xl overflow-hidden shadow-2xl">
+                                    <img src="https://img.youtube.com/vi/${confirmSong.videoId}/mqdefault.jpg" class="w-full h-full object-cover" />
+                                </div>
+                                <div class="text-center space-y-2">
+                                    <h2 class="text-white font-black text-xl tracking-tight leading-tight px-4">${confirmSong.title}</h2>
+                                    <p class="text-slate-400 text-sm font-medium">${confirmSong.artist || confirmSong.artists}</p>
+                                </div>
+                                <div class="flex gap-3 w-full">
+                                    <button 
+                                        onClick=${() => setConfirmSong(null)}
+                                        class="flex-1 py-4 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-bold uppercase text-[10px] tracking-widest transition-all"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button 
+                                        onClick=${() => { addToQueue(confirmSong); setConfirmSong(null); }}
+                                        class="flex-1 py-4 bg-primary text-white rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-primary/20 transition-all active:scale-95"
+                                    >
+                                        Add Now
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `}
+                    <!-- Live Lyrics Overlay -->
+                    ${showLyrics && nowPlaying && html`
+                        <div class="fixed inset-0 z-[1000] bg-black animate-in fade-in duration-300 flex flex-col">
+                            <div class="p-6 flex items-center justify-between border-b border-white/5 bg-black/50 backdrop-blur-xl">
+                                <div class="flex flex-col">
+                                    <h4 class="text-white font-black text-sm uppercase tracking-tighter">${nowPlaying.title}</h4>
+                                    <p class="text-[10px] text-emerald-400 font-bold uppercase tracking-widest">${nowPlaying.singer || 'Host'}</p>
+                                </div>
+                                <button 
+                                    onClick=${() => setShowLyrics(false)}
+                                    class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white active:scale-90 transition-transform"
+                                >
+                                    <i data-lucide="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+
+                            <div 
+                                ref=${lyricsContainerRef}
+                                class="flex-1 overflow-y-auto px-6 py-40 space-y-12 flex flex-col items-center"
+                            >
+                                ${lyrics.length === 0 ? html`
+                                    <div class="flex-1 flex flex-col items-center justify-center text-center space-y-4">
+                                        <div class="p-4 rounded-full bg-white/5">
+                                            <i data-lucide="music" class="w-8 h-8 text-white/20"></i>
+                                        </div>
+                                        <p class="text-white/30 font-bold text-sm uppercase tracking-widest">No lyrics available for this track</p>
+                                    </div>
+                                ` : lyrics.map((line, idx) => {
+                const isActive = idx === activeLineIndex;
+                const isPassed = idx < activeLineIndex;
+
+                return html`
+                                        <div 
+                                            data-active=${isActive}
+                                            class="transition-all duration-700 w-full text-center px-2 py-2 ${isActive ? 'opacity-100' : 'opacity-20'}"
+                                            style=${{
+                        fontSize: isActive ? 'clamp(1.2rem, 6vw, 1.45rem)' : '1rem',
+                        fontWeight: '900',
+                        color: isActive ? '#10b981' : (isPassed ? '#334155' : 'white'),
+                        filter: isActive ? 'drop-shadow(0 0 15px rgba(16,185,129,0.2))' : 'none',
+                        transform: isActive ? 'scale(1.08)' : 'scale(0.95)',
+                        lineHeight: '1.2',
+                        letterSpacing: '-0.02em'
+                    }}
+                                        >
+                                            ${line.text}
+                                        </div>
+                                    `;
+            })}
+                            </div>
+
+                            <!-- Tiny progress indicator -->
+                            ${currentPlayback.duration > 0 && html`
+                                <div class="h-1 bg-white/5 w-full">
+                                    <div class="h-full bg-emerald-500 transition-all duration-500" style=${{ width: `${(currentTime / currentPlayback.duration) * 100}%` }}></div>
+                                </div>
+                            `}
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        render(html`<${App} />`, document.getElementById('app'));
+
+        // Initialize Lucide icons
+        setTimeout(() => {
+            if (window.lucide) lucide.createIcons();
+        }, 100);
+    </script>
+</body>
+
+</html>

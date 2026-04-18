@@ -68,6 +68,8 @@ const convertFileSrc = (path) => {
 function App() {
     const [setupStatus, setSetupStatus] = useState("Checking dependencies...");
     const [isLockedByWeb, setIsLockedByWeb] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [showControls, setShowControls] = useState(false);
     const forceReconnectRef = useRef(false);
     const [reconnectTrigger, setReconnectTrigger] = useState(0);
     const [resumeTime, setResumeTime] = useState(0);
@@ -82,44 +84,44 @@ function App() {
                 const url = `${protocol}//${host}:1425/api/ws${forceReconnectRef.current ? '?force=true' : ''}`;
                 ws = new WebSocket(url);
                 wsRef.current = ws;
-                
+
                 ws.onopen = () => {
                     setIsLockedByWeb(false);
                     forceReconnectRef.current = false;
                 };
-                
+
                 ws.onmessage = (event) => {
                     try {
-                         const data = JSON.parse(event.data);
-                         if (data.type === 'error' && data.message === 'disconnected_by_force') {
-                              if (audioRef.current) audioRef.current.pause();
-                              setKaraokeMode(false);
-                              setCurrentSong(null);
-                              setIsLockedByWeb(true);
-                              alert("Disconnected: Display taken over by another screen.");
-                         } else if (data.type === 'sync_state') {
-                              const payload = data.payload;
-                              if (payload.currentSong) {
-                                   setLyricsData(payload.lyricsData || []); // Load lyrics directly from sync!
-                                   setCurrentSong(payload.currentSong);
-                                   setKaraokeMode(payload.isKaraokeMode);
-                                   setResumeTime(payload.currentTime);
-                                   setIsAutoPaused(!payload.isPlaying);
-                              }
-                         } else if (data.type === 'error' && data.message === 'locked') {
-                              setIsLockedByWeb(true);
-                         } else if (data.type === 'add') {
-                              const payload = data.payload;
-                              setQueue(prev => {
-                                   if (prev.some(item => item.videoId === payload.videoId && item.deviceId === payload.deviceId)) return prev;
-                                   return [...prev, { ...payload, status: 'waiting' }];
-                              });
-                         } else if (data.type === 'remove') {
-                              const payload = data.payload;
-                              setQueue(prev => prev.filter(item => !(item.videoId === payload.videoId && item.deviceId === payload.deviceId)));
-                         }
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'error' && data.message === 'disconnected_by_force') {
+                            if (audioRef.current) audioRef.current.pause();
+                            setKaraokeMode(false);
+                            setCurrentSong(null);
+                            setIsLockedByWeb(true);
+                            alert("Disconnected: Display taken over by another screen.");
+                        } else if (data.type === 'sync_state') {
+                            const payload = data.payload;
+                            if (payload.currentSong) {
+                                setLyricsData(payload.lyricsData || []); // Load lyrics directly from sync!
+                                setCurrentSong(payload.currentSong);
+                                setKaraokeMode(payload.isKaraokeMode);
+                                setResumeTime(payload.currentTime);
+                                setIsAutoPaused(!payload.isPlaying);
+                            }
+                        } else if (data.type === 'error' && data.message === 'locked') {
+                            setIsLockedByWeb(true);
+                        } else if (data.type === 'queue_add') {
+                            const payload = data.payload;
+                            setQueue(prev => {
+                                if (prev.some(item => (item.videoId || item.video_id) === (payload.videoId || payload.video_id) && item.deviceId === payload.deviceId)) return prev;
+                                return [...prev, { ...payload, status: 'waiting' }];
+                            });
+                        } else if (data.type === 'queue_remove') {
+                            const payload = data.payload;
+                            setQueue(prev => prev.filter(item => !((item.videoId || item.video_id) === (payload.videoId || payload.video_id) && item.deviceId === payload.deviceId)));
+                        }
                     } catch (e) {
-                         console.error("WS error parsing", e);
+                        console.error("WS error parsing", e);
                     }
                 };
             }, 100);
@@ -133,19 +135,19 @@ function App() {
         let unlistenLock;
         let unlistenForce;
         const listenWebStatus = async () => {
-             unlistenLock = await listen('web_viewer_status', (event) => {
-                 setIsLockedByWeb(!!event.payload);
-             });
-             unlistenForce = await listen('force_takeover_happened', () => {
-                 if (audioRef.current) audioRef.current.pause();
-                 setKaraokeMode(false);
-                 setCurrentSong(null);
-             });
+            unlistenLock = await listen('web_viewer_status', (event) => {
+                setIsLockedByWeb(!!event.payload);
+            });
+            unlistenForce = await listen('force_takeover_happened', () => {
+                if (audioRef.current) audioRef.current.pause();
+                setKaraokeMode(false);
+                setCurrentSong(null);
+            });
         };
         listenWebStatus();
         return () => {
-             if (unlistenLock && typeof unlistenLock === 'function') unlistenLock();
-             if (unlistenForce && typeof unlistenForce === 'function') unlistenForce();
+            if (unlistenLock && typeof unlistenLock === 'function') unlistenLock();
+            if (unlistenForce && typeof unlistenForce === 'function') unlistenForce();
         }
     }, [reconnectTrigger]);
 
@@ -200,6 +202,8 @@ function App() {
     const [appConfig, setAppConfig] = useState({ gpuEnabled: true });
     const [isPartyMode, setIsPartyMode] = useState(false);
     const [partyUrl, setPartyUrl] = useState("");
+    const [activePartyId, setActivePartyId] = useState("");
+    const [activePartyToken, setActivePartyToken] = useState("");
     const [queue, setQueue] = useState([]); // Array of { videoId, title, artists, status }
 
     const [isReinstalling, setIsReinstalling] = useState(null); // id of dependency being reinstalled
@@ -368,25 +372,84 @@ function App() {
         }
     };
 
-    const loadPartyUrl = useCallback(async () => {
-        if (!isTauri) {
-            const host = window.location.hostname;
-            setPartyUrl(`http://${host}:1425`);
-            return;
-        }
-        try {
-            const url = await invoke('get_party_url');
-            setPartyUrl(url);
-        } catch (e) {
-            console.error("Failed to load party url", e);
-        }
-    }, []);
+    const handlePartyToggle = async () => {
+        if (!isTauri) return;
 
-    useEffect(() => {
         if (isPartyMode) {
-            loadPartyUrl();
+            setIsPartyMode(false);
+            setPartyUrl("");
+            invoke('stop_party_mode').catch(console.error);
+        } else {
+            let pName = "";
+            let token = "";
+
+            const now = Math.floor(Date.now() / 1000);
+            const isRecent = appConfig.lastPartyTimestamp && (now - appConfig.lastPartyTimestamp < 24 * 3600);
+
+            if (isRecent && appConfig.lastPartyId) {
+                const choice = confirm(`You had an active party "${appConfig.lastPartyId}" in the last 24h. Do you want to continue it?\n\n(Cancel to create a new one)`);
+                if (choice) {
+                    pName = appConfig.lastPartyId;
+                    token = appConfig.lastPartyToken;
+                }
+            }
+
+            if (!pName) {
+                const defaultName = Math.random().toString(36).substring(2, 6).toUpperCase();
+                pName = prompt("Enter a unique Party Name for the cloud relay:", defaultName);
+                if (!pName) return;
+                token = Math.random().toString(36).substring(2, 10);
+            }
+
+            let relayHost = appConfig.relayUrl || "";
+            let secureRelayHost = "";
+
+            if (!relayHost) {
+                try {
+                    const ip = await invoke('get_local_ip_addr');
+                    relayHost = `http://${ip}:3000`;
+                    // Secure link for mobile (WakeLock requirement)
+                    secureRelayHost = `https://${ip}:3001`;
+                } catch (e) {
+                    relayHost = "http://localhost:3000";
+                    secureRelayHost = "https://localhost:3001";
+                }
+            } else {
+                // If user has a custom relay, try to derive secure port
+                secureRelayHost = relayHost.replace("http://", "https://");
+                if (secureRelayHost.includes(":3000")) {
+                     secureRelayHost = secureRelayHost.replace(":3000", ":3001");
+                }
+            }
+
+            try {
+                await invoke('start_party_mode', {
+                    relayUrl: relayHost,
+                    partyName: pName,
+                    token: token
+                });
+                setIsPartyMode(true);
+                // The Join URL we show the user should be the SECURE one for mobile features
+                setPartyUrl(`${secureRelayHost}/?party_id=${pName}&token=${token}`);
+                setActivePartyId(pName);
+                setActivePartyToken(token);
+
+                // Save this party as the last one
+                const newConfig = {
+                    ...appConfig,
+                    lastPartyId: pName,
+                    lastPartyToken: token,
+                    lastPartyTimestamp: now
+                };
+                setAppConfig(newConfig);
+                invoke('set_config', { config: newConfig }).catch(console.error);
+
+            } catch (e) {
+                console.error("Failed to connect to relay", e);
+                alert(`Failed to start party mode: ${e}`);
+            }
         }
-    }, [isPartyMode, loadPartyUrl]);
+    };
 
     // Listen for queue updates from local webserver
     useEffect(() => {
@@ -425,6 +488,98 @@ function App() {
         initPartyListener();
         return () => { if (unlistenParty) unlistenParty(); };
     }, []);
+
+    // Upload song metadata once when track changes or lyrics become available
+    useEffect(() => {
+        if (!isPartyMode || !currentSong?.videoId || !activePartyId) return;
+
+        const uploadMetadata = async () => {
+            const relayBase = partyUrl.split('/?')[0];
+            const payload = {
+                partyId: activePartyId,
+                token: activePartyToken,
+                metadata: {
+                    title: currentSong.title,
+                    artist: currentSong.artist,
+                    lyrics: lyricsData,
+                    videoId: currentSong.videoId
+                }
+            };
+
+            try {
+                console.log(`[Party] Uploading metadata for ${currentSong.title} (${lyricsData?.length || 0} lines)`);
+                const res = await fetch(`${relayBase}/api/party/metadata`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) console.warn('[Party] Metadata upload failed:', res.status);
+            } catch (e) {
+                console.error('[Party] Failed to upload metadata', e);
+            }
+        };
+
+        uploadMetadata();
+    }, [currentSong?.videoId, lyricsData, isPartyMode, activePartyId]);
+
+    // Sync playback state with Party Relay
+    useEffect(() => {
+        if (!isPartyMode) return;
+
+        const syncState = (isFull = false) => {
+            const msg = {
+                type: 'sync_state',
+                payload: {
+                    currentSong: isFull ? currentSong : { videoId: currentSong?.videoId, title: currentSong?.title, artist: currentSong?.artist, thumbnail: currentSong?.thumbnail },
+                    isPlaying,
+                    isKaraokeMode: karaokeMode,
+                    currentTime: (audioRef.current && isFinite(audioRef.current.currentTime)) ? audioRef.current.currentTime : 0,
+                    duration: (audioRef.current && isFinite(audioRef.current.duration)) ? audioRef.current.duration : 0,
+                    singer: currentSong?.singer || "Host"
+                }
+            };
+
+            if (isPartyMode) {
+                console.log(`Broadcasting ${isFull ? 'FULL' : 'LIGHT'} Sync State:`, msg.payload.currentSong?.title);
+                if (isTauri) {
+                    invoke('broadcast_ws', { payload: msg }).catch(console.error);
+                } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(JSON.stringify(msg));
+                }
+            }
+        };
+
+        // Immediate Full Sync on state change
+        syncState(true);
+
+        // Retries for reliability
+        const t1 = setTimeout(() => syncState(true), 1000);
+        const t2 = setTimeout(() => syncState(true), 4000);
+
+        // Periodic Light Sync (every 30 seconds)
+        const interval = setInterval(() => syncState(false), 2000);
+        return () => {
+            clearTimeout(t1);
+            clearTimeout(t2);
+            clearInterval(interval);
+        };
+    }, [currentSong, isPlaying, karaokeMode, isPartyMode, lyricsData]);
+
+    // Sync Queue with Party Relay
+    useEffect(() => {
+        if (!isPartyMode) return;
+
+        const msg = {
+            type: 'sync_queue',
+            queue: queue
+        };
+
+        if (isTauri) {
+            invoke('broadcast_ws', { payload: msg }).catch(console.error);
+        } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify(msg));
+        }
+    }, [queue, isPartyMode]);
 
     // Ref to track waiting state without stale closures inside setKaraokeMode
     const isWaitingRef = useRef(false);
@@ -488,7 +643,7 @@ function App() {
                         openSong();
                         return true;
                     } else if (isWaitingRef.current) {
-                        // Song ended while next was still downloading — now it's ready
+                        // Song ended while next was still downloading -- now it's ready
                         openSong();
                         return true;
                     }
@@ -632,22 +787,6 @@ function App() {
 
         const handleTimeUpdate = () => {
             const currentTime = audio.currentTime;
-            
-            if (Date.now() - lastSyncRef.current > 1000) {
-                 lastSyncRef.current = Date.now();
-                 if (!isTauri && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                      wsRef.current.send(JSON.stringify({
-                           type: 'sync_state',
-                           payload: {
-                                currentSong,
-                                currentTime,
-                                isKaraokeMode: karaokeMode,
-                                isPlaying: !audio.paused,
-                                lyricsData: lyricsData
-                           }
-                      }));
-                 }
-            }
 
             let newIndex = -1;
             for (let i = 0; i < lyricsData.length; i++) {
@@ -688,18 +827,18 @@ function App() {
     // Handle resume time for takeover
     useEffect(() => {
         if (currentSong && resumeTime > 0 && audioRef.current) {
-             const audio = audioRef.current;
-             const playFn = () => {
-                  audio.currentTime = resumeTime;
-                  setResumeTime(0); // clear
-                  audio.play().catch(console.error);
-             };
-             
-             if (audio.readyState >= 2) {
-                  playFn();
-             } else {
-                  audio.addEventListener('canplay', playFn, { once: true });
-             }
+            const audio = audioRef.current;
+            const playFn = () => {
+                audio.currentTime = resumeTime;
+                setResumeTime(0); // clear
+                audio.play().catch(console.error);
+            };
+
+            if (audio.readyState >= 2) {
+                playFn();
+            } else {
+                audio.addEventListener('canplay', playFn, { once: true });
+            }
         }
     }, [currentSong, resumeTime]);
 
@@ -982,7 +1121,25 @@ function App() {
             artist = foundInRecent.artist || "";
         }
 
-        setCurrentSong({ videoId, thumbnail, title, artist });
+        // Notify singer if this song is from the party queue
+        const queueItem = queue.find(q => q.videoId === videoId);
+        if (queueItem && queueItem.deviceId && isPartyMode) {
+            invoke('broadcast_ws', {
+                payload: {
+                    type: 'notify_singer',
+                    deviceId: queueItem.deviceId,
+                    payload: { title: title || queueItem.title, videoId }
+                }
+            }).catch(console.error);
+        }
+
+        setCurrentSong({
+            videoId,
+            thumbnail,
+            title,
+            artist,
+            singer: queueItem?.singer || "Host"
+        });
         setActiveLineIndex(-1); // Reset for new song
 
         if (e) {
@@ -1198,8 +1355,6 @@ function App() {
     }, [karaokeMode]);
 
     // Helper Logic for Display
-    const [showControls, setShowControls] = useState(false);
-    const [isPlaying, setIsPlaying] = useState(false);
 
     // Auto-hide controls after 2s of inactivity (only if playing)
     useEffect(() => {
@@ -1240,7 +1395,7 @@ function App() {
             const gap = lyricsData[activeLineIndex + 1].time - lyricsData[activeLineIndex].time;
             const timeUntilNext = lyricsData[activeLineIndex + 1].time - currentTime;
             if (gap > 8 && timeUntilNext > 0 && timeUntilNext < 4) {
-                const dots = "• ".repeat(Math.ceil(timeUntilNext));
+                const dots = ". ".repeat(Math.ceil(timeUntilNext));
                 displayNextText = dots + displayNextText;
             }
         }
@@ -1250,7 +1405,7 @@ function App() {
             const timeUntilStart = firstTime - currentTime;
             if (timeUntilStart > 0 && timeUntilStart < 5) {
                 displayCurrText = "Get Ready...";
-                const dots = "• ".repeat(Math.ceil(timeUntilStart));
+                const dots = ". ".repeat(Math.ceil(timeUntilStart));
                 displayNextText = dots + displayNextText;
             }
         }
@@ -1353,7 +1508,7 @@ function App() {
                         <motion.button
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
-                            onClick={() => setIsPartyMode(prev => !prev)}
+                            onClick={handlePartyToggle}
                             className={`p-3 rounded-full border border-white/10 ${isPartyMode ? 'bg-accent/20 text-accent border-accent/30' : 'bg-white/5 text-white/50'} hover:text-white hover:bg-white/10 transition-all flex items-center justify-center shadow-lg backdrop-blur-md`}
                             title={isPartyMode ? "Disable Party Mode" : "Enable Party Mode"}
                         >
@@ -1984,7 +2139,7 @@ function App() {
                                                 <LyricLine
                                                     line={line}
                                                     isActive={idx === activeLineIndex}
-                                                     isPassed={idx < activeLineIndex}
+                                                    isPassed={idx < activeLineIndex}
                                                     audioRef={audioRef}
                                                     displayNextText={displayNextText}
                                                     gap={wordGap}
@@ -2123,7 +2278,7 @@ function App() {
 
                                     {/* KARAOKE SECTION */}
                                     <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Karaoke</h3>
-                                    
+
                                     <div className="bg-white/5 border border-white/5 rounded-2xl p-4 space-y-3">
                                         <div className="flex flex-col gap-1.5">
                                             <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Instrumental Preset</p>
@@ -2181,6 +2336,46 @@ function App() {
                                             </button>
                                         </div>
                                     </div>
+
+                                    {/* PLUGIN SECTION */}
+                                    <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Library Source Plugins</h3>
+
+                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 space-y-3">
+                                        <div className="flex flex-col gap-1.5">
+                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Active Plugin Path</p>
+                                            <input
+                                                type="text"
+                                                value={appConfig.activePluginPath || ""}
+                                                onChange={(e) => typeof updateConfig !== 'undefined' && updateConfig({ ...appConfig, activePluginPath: e.target.value })}
+                                                placeholder="Leave blank for built-in default plugin..."
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all font-mono"
+                                            />
+                                            <p className="text-[9px] text-white/30">An executable or script that obeys the KraoQ JSON CLI contract.</p>
+                                        </div>
+                                        <div className="flex flex-col gap-1.5 mt-2">
+                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Raw Library Folder</p>
+                                            <input
+                                                type="text"
+                                                value={appConfig.rawLibraryFolder || ""}
+                                                onChange={(e) => typeof updateConfig !== 'undefined' && updateConfig({ ...appConfig, rawLibraryFolder: e.target.value })}
+                                                placeholder="e.g. C:/KraoQ/RawAudio..."
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all font-mono"
+                                            />
+                                            <p className="text-[9px] text-white/30">Target directory where the plugin downloads audio/lyrics. Blank defaults to internal app data.</p>
+                                        </div>
+                                        <div className="flex flex-col gap-1.5 mt-2">
+                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Cloud Relay URL</p>
+                                            <input
+                                                type="text"
+                                                value={appConfig.relayUrl || ""}
+                                                onChange={(e) => typeof updateConfig !== 'undefined' && updateConfig({ ...appConfig, relayUrl: e.target.value })}
+                                                placeholder="e.g. http://192.168.1.5:3000 or mykraorelay.com"
+                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all font-mono"
+                                            />
+                                            <p className="text-[9px] text-white/30">The address of the KraoQ Relay server. Leave blank to auto-detect local IP.</p>
+                                        </div>
+                                    </div>
+
                                     {/* GPU STATUS CARD */}
                                     {isTauri && (
                                         <div className={`mt-4 rounded-2xl border p-4 transition-all ${isCheckingGpu ? 'bg-white/5 border-white/5' :
@@ -2290,7 +2485,7 @@ function App() {
                                                                 }
                                                                 ${isReinstalling !== null && isReinstalling !== dep.id ? 'opacity-30' : ''}
                                                             `}
-                                                         Lark
+                                                            Lark
                                                         >
                                                             {isReinstalling === dep.id ? (
                                                                 <Loader2 size={12} className="animate-spin" />
@@ -2359,7 +2554,7 @@ function App() {
 
             {/* Full Screen Lock Overlay */}
             {isLockedByWeb && (
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 1 }}
@@ -2374,14 +2569,14 @@ function App() {
                     </motion.div>
                     <h1 className="text-2xl font-bold text-white tracking-tight">Display Forwarded</h1>
                     <p className="text-sm text-white/60 max-w-[320px]">This workspace is currently being controlled and viewed strictly from another remote screen.</p>
-                    
+
                     {status && (
                         <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[11px] text-slate-400">
                             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                             {status}
                         </div>
                     )}
-                    
+
                     <div className="mt-4 flex flex-col items-center gap-3">
                         <div className="flex items-center gap-2 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 max-w-[280px]">
                             <AlertCircle className="text-amber-400 shrink-0" size={16} />
@@ -2389,10 +2584,10 @@ function App() {
                         </div>
                         <button
                             onClick={isTauri ? handleTauriTakeover : () => {
-                                 if (wsRef.current) wsRef.current.close();
-                                 forceReconnectRef.current = true;
-                                 setReconnectTrigger(prev => prev + 1);
-                                 setIsLockedByWeb(false);
+                                if (wsRef.current) wsRef.current.close();
+                                forceReconnectRef.current = true;
+                                setReconnectTrigger(prev => prev + 1);
+                                setIsLockedByWeb(false);
                             }}
                             className="px-5 py-2.5 rounded-2xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-widest shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
                         >
@@ -2501,7 +2696,7 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
         return () => cancelAnimationFrame(rafId);
     }, [isActive, isNext, gap, line.words, config, isFirst]);
 
-    // if (isNext && displayNextText.includes('•')) {
+    // if (isNext && displayNextText.includes('.')) {
     //     return displayNextText;
     // }
 

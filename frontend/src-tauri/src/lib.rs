@@ -42,6 +42,18 @@ pub struct AppConfig {
     pub instrumental_preset: String,
     #[serde(default = "default_vocal_preset")]
     pub vocal_preset: String,
+    #[serde(default)]
+    pub active_plugin_path: String,
+    #[serde(default)]
+    pub raw_library_folder: String,
+    #[serde(default)]
+    pub relay_url: String,
+    #[serde(default)]
+    pub last_party_id: String,
+    #[serde(default)]
+    pub last_party_token: String,
+    #[serde(default)]
+    pub last_party_timestamp: i64,
 }
 
 fn default_instrumental_preset() -> String { "karaoke".to_string() }
@@ -54,9 +66,15 @@ impl Default for AppConfig {
             python_version: "3.11.8".to_string(),
             torch_version: "2.5.1".to_string(),
             cuda_version: "12.1".to_string(),
-            ffmpeg_version: "latest".to_string(),
+            ffmpeg_version: "7.1".to_string(),
             instrumental_preset: default_instrumental_preset(),
             vocal_preset: default_vocal_preset(),
+            active_plugin_path: "".to_string(),
+            raw_library_folder: "".to_string(),
+            relay_url: "".to_string(),
+            last_party_id: "".to_string(),
+            last_party_token: "".to_string(),
+            last_party_timestamp: 0,
         }
     }
 }
@@ -214,10 +232,25 @@ pub(crate) fn get_python_script_path(app: &AppHandle, script_name: &str) -> Path
 
 #[tauri::command]
 async fn search(query: String, app: AppHandle) -> Result<String, String> {
-    let script = get_python_script_path(&app, "search.py");
-    let python_exe = get_python_exe(&app);
-    let output = create_command(python_exe)
-        .arg(&script)
+    let config = crate::get_config_internal(&app);
+    let state: tauri::State<crate::AppState> = app.state();
+    
+    let mut program = get_python_exe(&app).to_string_lossy().to_string();
+    let default_plugin = state.python_dir.parent().unwrap().join("youtube_plugin").join("main.py");
+    let mut is_default = true;
+    
+    if !config.active_plugin_path.trim().is_empty() {
+        program = config.active_plugin_path.clone();
+        is_default = false;
+    }
+
+    let mut cmd = create_command(&program);
+    if is_default {
+        cmd.arg(&default_plugin);
+    }
+
+    let output = cmd
+        .arg("search")
         .arg(&query)
         .output()
         .await
@@ -232,10 +265,25 @@ async fn search(query: String, app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 async fn suggestions(query: String, app: AppHandle) -> Result<String, String> {
-    let script = get_python_script_path(&app, "suggestions.py");
-    let python_exe = get_python_exe(&app);
-    let output = create_command(python_exe)
-        .arg(&script)
+    let config = crate::get_config_internal(&app);
+    let state: tauri::State<crate::AppState> = app.state();
+    
+    let mut program = get_python_exe(&app).to_string_lossy().to_string();
+    let default_plugin = state.python_dir.parent().unwrap().join("youtube_plugin").join("main.py");
+    let mut is_default = true;
+    
+    if !config.active_plugin_path.trim().is_empty() {
+        program = config.active_plugin_path.clone();
+        is_default = false;
+    }
+
+    let mut cmd = create_command(&program);
+    if is_default {
+        cmd.arg(&default_plugin);
+    }
+
+    let output = cmd
+        .arg("suggestions")
         .arg(&query)
         .output()
         .await
@@ -432,18 +480,36 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
             }
         }
 
-        let download_script = state.python_dir.join("download_pipeline.py");
         let separate_script = state.python_dir.join("separate.py");
         let uploads_dir = state.uploads_dir.to_string_lossy().to_string();
         let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let config = get_config_internal(&app);
+
+        let mut raw_lib_dir = config.raw_library_folder.clone();
+        if raw_lib_dir.trim().is_empty() {
+            raw_lib_dir = uploads_dir.clone();
+        }
+
+        emit("Sourcing audio & lyrics via plugin...");
+        // 1. Download Pipeline (Plugin)
+        let mut program = get_python_exe(&app).to_string_lossy().to_string();
+        let default_plugin = state.python_dir.parent().unwrap().join("youtube_plugin").join("main.py");
+        let mut is_default = true;
         
-        emit("Downloading audio & lyrics from YouTube...");
-        // 1. Download Pipeline
-        let python_exe = get_python_exe(&app);
-        let dl_output = create_command(&python_exe)
-            .arg(&download_script)
+        if !config.active_plugin_path.trim().is_empty() {
+            program = config.active_plugin_path.clone();
+            is_default = false;
+        }
+
+        let mut dl_cmd = create_command(&program);
+        if is_default {
+            dl_cmd.arg(&default_plugin);
+        }
+
+        let dl_output = dl_cmd
+            .arg("download")
             .arg(&video_id)
-            .arg(&uploads_dir)
+            .arg(&raw_lib_dir)
             .output()
             .await
             .map_err(|e| format!("Download failed execution: {}", e))?;
@@ -456,7 +522,7 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
             }
         }
         
-        let dl_json = dl_result.ok_or_else(|| format!("Invalid response from download pipeline: {}", dl_stdout))?;
+        let dl_json = dl_result.ok_or_else(|| format!("Invalid response from plugin: {}", dl_stdout))?;
         
         if let Some(err) = dl_json.get("error") {
             return Err(err.as_str().unwrap_or("Unknown error").to_string());
@@ -474,9 +540,9 @@ async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> 
         let result_file_path = PathBuf::from(&uploads_dir).join(&result_filename);
         let _ = std::fs::remove_file(&result_file_path);
 
-        let config = get_config_internal(&app);
         let gpu_env = if config.gpu_enabled { "1" } else { "0" };
 
+        let python_exe = get_python_exe(&app);
         let sep_output = create_command(&python_exe)
             .arg(&separate_script)
             .arg(&mp3_path)
@@ -614,8 +680,6 @@ async fn reinstall_dependency(id: String, app: AppHandle) -> Result<(), String> 
         "models" => setup::install_ai_models(&app, &models_dir, 3).await?,
         "pip" => {
             setup::install_pip_modules(&app, &python_exe, &req_path, 4).await?;
-            // Pip modules (audio-separator[gpu]) install CPU-only torch,
-            // so we must re-run GPU acceleration to restore CUDA torch.
             let gpu_done_file = app_dir.join(".gpu_setup_done");
             let _ = std::fs::remove_file(&gpu_done_file);
             setup::install_gpu_acceleration(&app, &python_exe, &config.torch_version, &config.cuda_version, 5).await?;
@@ -625,6 +689,14 @@ async fn reinstall_dependency(id: String, app: AppHandle) -> Result<(), String> 
     }
     Ok(())
 }
+
+#[tauri::command]
+async fn get_recommendations(app: tauri::AppHandle) -> Result<Vec<db::CachedSong>, String> {
+    let state = app.state::<AppState>();
+    let conn = state.db_conn.lock().unwrap();
+    db::get_recommendations(&conn, 20).map_err(|e| e.to_string())
+}
+
 
 
 
@@ -667,16 +739,8 @@ pub fn run() {
             });
 
             
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-
-                if let Ok(port) = server::start_server(app_handle.clone()).await {
-                    let state = app_handle.state::<AppState>();
-                    *state.party_port.lock().unwrap() = Some(port);
-                    println!("Party Mode Server running on port {}", port);
-                }
-            });
-            
+            let _app_handle = app.handle().clone();
+            // Server (WS client) connection is now manually triggered via UI Start Party Mode button
             Ok(())
 
         })
@@ -688,12 +752,13 @@ pub fn run() {
             setup::setup_dependencies,
             set_config,
             get_app_config,
-            check_gpu_status,
             reinstall_dependency,
-            server::get_party_url,
+            server::get_local_ip_addr,
+            server::start_party_mode,
+            server::stop_party_mode,
             server::remove_from_party_queue,
-            server::force_takeover
-
+            server::broadcast_ws,
+            get_recommendations
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

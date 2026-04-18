@@ -65,3 +65,24 @@ pub fn insert_song(conn: &Connection, song: &CachedSong) -> Result<()> {
     )?;
     Ok(())
 }
+
+pub fn get_recommendations(conn: &Connection, limit: i32) -> Result<Vec<CachedSong>> {
+    let mut stmt = conn.prepare("SELECT videoId, title, artist, lrcPath, instrumentalPath, missingLyrics, timestamp FROM cached_songs ORDER BY timestamp ASC LIMIT ?")?;
+    let rows = stmt.query_map(params![limit], |row| {
+        Ok(CachedSong {
+            video_id: row.get(0)?,
+            title: row.get(1)?,
+            artist: row.get(2)?,
+            lrc_path: row.get(3)?,
+            instrumental_path: row.get(4)?,
+            missing_lyrics: row.get::<_, i32>(5)? != 0,
+            timestamp: row.get(6)?,
+        })
+    })?;
+
+    let mut songs = Vec::new();
+    for song in rows {
+        songs.push(song?);
+    }
+    Ok(songs)
+}

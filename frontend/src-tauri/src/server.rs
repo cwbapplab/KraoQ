@@ -1,31 +1,11 @@
-use axum::{
-    routing::{get, post},
-    Router,
-    extract::{Query, State, ws::{WebSocketUpgrade, WebSocket, Message}},
-    response::{Html, IntoResponse},
-    http::StatusCode,
-    Json,
-};
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, Emitter, Listener};
-use serde::Deserialize;
-use local_ip_address::local_ip;
+use tauri::{AppHandle, Manager, Emitter};
+use serde::{Deserialize, Serialize};
+use futures_util::{StreamExt, SinkExt};
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 
-#[derive(Clone)]
-pub struct ServerState {
-    pub app: AppHandle,
-    pub connected_clients: Arc<std::sync::Mutex<usize>>,
-    pub force_disconnect_tx: tokio::sync::broadcast::Sender<()>,
-    pub current_playback: Arc<std::sync::Mutex<Option<serde_json::Value>>>,
-    pub force_takeover_active: Arc<std::sync::atomic::AtomicBool>,
-}
-
-#[derive(Deserialize)]
-pub struct SearchParams {
-    pub query: String,
-}
-
-#[derive(Deserialize, serde::Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct QueueRequest {
     #[serde(rename = "videoId")]
     pub video_id: String,
@@ -37,7 +17,7 @@ pub struct QueueRequest {
     pub device_id: String,
 }
 
-#[derive(Deserialize, Clone, serde::Serialize)]
+#[derive(Deserialize, Clone, Serialize)]
 pub struct RemoveRequest {
     #[serde(rename = "videoId")]
     pub video_id: String,
@@ -45,322 +25,219 @@ pub struct RemoveRequest {
     pub device_id: String,
 }
 
-
-
-
-async fn handle_root() -> Html<&'static str> {
-    Html(include_str!("party.html"))
-}
-
-async fn handle_search(
-    State(state): State<Arc<ServerState>>,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let app = state.app.clone();
-    let query = params.query;
-    match crate::search(query, app).await {
-        Ok(res) => {
-            if let Ok(v) = serde_json::from_str(&res) {
-                 Ok(Json(v))
-            } else {
-                 Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
-    }
-}
-
-async fn handle_suggestions(
-    State(state): State<Arc<ServerState>>,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let app = state.app.clone();
-    let query = params.query;
-    match crate::suggestions(query, app).await {
-        Ok(res) => {
-            if let Ok(v) = serde_json::from_str(&res) {
-                 Ok(Json(v))
-            } else {
-                 Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
-    }
-}
-
-async fn handle_process_yt(
-    State(state): State<Arc<ServerState>>,
-    Query(params): Query<SearchParams>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let app = state.app.clone();
-    let video_id = params.query;
-    match crate::process_yt(video_id, app).await {
-        Ok(res) => {
-            if let Ok(v) = serde_json::from_str(&res) {
-                 Ok(Json(v))
-            } else {
-                 Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
-    }
-}
-
-#[derive(Deserialize)]
-pub struct WsParams {
-    pub force: Option<String>,
-}
-
-async fn handle_ws(
-    ws: WebSocketUpgrade,
-    Query(params): Query<WsParams>,
-    State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
-    let force = params.force.as_deref() == Some("true");
-    ws.on_upgrade(move |socket| handle_socket(socket, state, force))
-}
-
-async fn handle_socket(socket: WebSocket, state: Arc<ServerState>, force: bool) {
-    let app = state.app.clone();
-    
-    if force {
-         state.force_takeover_active.store(true, std::sync::atomic::Ordering::SeqCst);
-         let _ = state.force_disconnect_tx.send(());
-         let _ = app.emit("force_takeover_happened", ());
-         *state.current_playback.lock().unwrap() = None;
-         for _ in 0..10 {
-              if *state.connected_clients.lock().unwrap() == 0 {
-                   break;
-              }
-              tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-         }
-         state.force_takeover_active.store(false, std::sync::atomic::Ordering::SeqCst);
-    }
-    
-    let is_locked = {
-        let mut count = state.connected_clients.lock().unwrap();
-        if *count >= 1 {
-            true
-        } else {
-            *count += 1;
-            let _ = app.emit("web_viewer_status", true);
-            false
-        }
-    };
-
-    if is_locked {
-        let mut socket = socket;
-        let _ = socket.send(Message::Text(r#"{"type":"error","message":"locked"}"#.to_string())).await;
-        return;
-    }
-
-    let (tx_ws, mut rx_ws) = tokio::sync::mpsc::channel::<String>(100);
-    
-    {
-        let cached = state.current_playback.lock().unwrap().clone();
-        if let Some(payload) = cached {
-             let _ = tx_ws.try_send(format!(r#"{{"type":"sync_state","payload":{}}}"#, payload.to_string()));
-        }
-    }
-    
-    let tx_add = tx_ws.clone();
-    let id_add = app.listen_any("party_add_to_queue", move |event| {
-         let _ = tx_add.try_send(format!(r#"{{"type":"add","payload":{}}}"#, event.payload().to_string()));
-    });
-
-    let tx_remove = tx_ws.clone();
-    let id_remove = app.listen_any("party_remove_from_queue", move |event| {
-         let _ = tx_remove.try_send(format!(r#"{{"type":"remove","payload":{}}}"#, event.payload().to_string()));
-    });
-
-    let mut force_rx_inner = state.force_disconnect_tx.subscribe();
-    let send_task = tokio::spawn(async move {
-         let mut socket = socket;
-         let mut disconnected = false;
-         loop {
-              tokio::select! {
-                  msg = rx_ws.recv() => {
-                       if let Some(msg) = msg {
-                            if socket.send(Message::Text(msg)).await.is_err() { break; }
-                       } else { break; }
-                  }
-                  _ = force_rx_inner.recv() => {
-                       let _ = socket.send(Message::Text(r#"{"type":"error","message":"disconnected_by_force","warning":"queue_desync_risk"}"#.to_string())).await;
-                       tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                       disconnected = true;
-                       break;
-                  }
-              }
-         }
-         (socket, disconnected)
-    });
-
-    let (mut socket_recv, disconnected) = send_task.await.unwrap();
-    if !disconnected {
-        let mut force_rx_outer = state.force_disconnect_tx.subscribe();
-        tokio::select! {
-             _ = async { 
-                  while let Some(Ok(msg)) = socket_recv.recv().await {
-                       if let Message::Text(text) = msg {
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                                 if v["type"] == "sync_state" {
-                                      *state.current_playback.lock().unwrap() = Some(v["payload"].clone());
-                                 }
-                            }
-                       }
-                  }
-             } => {}
-             _ = force_rx_outer.recv() => {
-                  let _ = socket_recv.send(Message::Text(r#"{"type":"error","message":"disconnected_by_force","warning":"queue_desync_risk"}"#.to_string())).await;
-             }
-        }
-    }
-
-    let app_for_cleanup = app.clone();
-    app_for_cleanup.unlisten(id_add);
-    app_for_cleanup.unlisten(id_remove);
-
-    let mut count = state.connected_clients.lock().unwrap();
-    if *count > 0 { *count -= 1; }
-    if *count == 0 {
-         let _ = app_for_cleanup.emit("web_viewer_status", false);
-         if !state.force_takeover_active.load(std::sync::atomic::Ordering::SeqCst) {
-              *state.current_playback.lock().unwrap() = None;
-         }
-    }
-}
-
-async fn handle_get_queue(
-    State(state): State<Arc<ServerState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let app = state.app.clone();
-    let app_state = app.state::<crate::AppState>();
-    let q = app_state.party_queue.lock().unwrap();
-    
-    let current_playback = state.current_playback.lock().unwrap().clone();
-
-    let res_json = serde_json::json!({
-        "queue": q.clone(),
-        "currentPlayback": current_playback
-    });
-
-    Ok(Json(res_json))
-}
-
-
-async fn handle_queue(
-    State(state): State<Arc<ServerState>>,
-    Json(payload): Json<QueueRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let app = state.app.clone();
-    let app_state = app.state::<crate::AppState>();
-    
-    let singer_clean = payload.singer.trim().to_lowercase();
-    if singer_clean.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "message": "Singer name cannot be empty" }))));
-    }
-
-    let mut q = app_state.party_queue.lock().unwrap();
-    if q.iter().any(|item| item.singer.trim().to_lowercase() == singer_clean) {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "success": false, "message": "You already have a song in the queue!" }))));
-    }
-
-    q.push(payload.clone());
-    drop(q);
-
-    // Emit to tauri
-    let _ = app.emit("party_add_to_queue", payload);
-    Ok(Json(serde_json::json!({ "success": true })))
-}
-
-async fn handle_client_remove_queue(
-    State(state): State<Arc<ServerState>>,
-    Json(payload): Json<RemoveRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let app = state.app.clone();
-    let app_state = app.state::<crate::AppState>();
-    let mut q = app_state.party_queue.lock().unwrap();
-    let payload_clone = payload.clone();
-    q.retain(|item| !(item.video_id == payload.video_id && item.device_id == payload.device_id));
-    drop(q);
-    
-    let _ = app.emit("party_remove_from_queue", payload_clone);
-    Ok(Json(serde_json::json!({ "success": true })))
-}
-
+// Global active websocket channel to allow the app to broadcast down the WS
+struct WsTx(std::sync::Mutex<Option<tokio::sync::mpsc::Sender<String>>>);
 
 #[tauri::command]
-pub fn remove_from_party_queue(app: AppHandle, video_id: String, device_id: String) {
-    println!("[Rust] remove_from_party_queue called with video_id: {}, device_id: {}", video_id, device_id);
-    let state = app.state::<crate::AppState>();
-    let mut q = state.party_queue.lock().unwrap();
-    let old_len = q.len();
-    q.retain(|item| !(item.video_id == video_id && item.device_id == device_id));
-    println!("[Rust] Queue items retained. size: {} -> {}", old_len, q.len());
-    drop(q);
+pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, party_name: String, token: String) -> Result<(), String> {
+    
+    let ws_url = format!("{}/api/ws?party_id={}&token={}&role=host", relay_url.replace("http", "ws"), party_name, token);
 
-    // Emit to WebSocket smartphones so they can remove it instantly over socket list update streams!
-    let _ = app.emit("party_remove_from_queue", RemoveRequest { video_id: video_id.clone(), device_id: device_id.clone() });
-}
+    let (ws_stream, _) = connect_async(ws_url.clone()).await.map_err(|e| e.to_string())?;
+    
+    let (mut write, mut read) = futures_util::StreamExt::split(ws_stream);
+    
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+    app.manage(Arc::new(WsTx(std::sync::Mutex::new(Some(tx)))));
 
+    let app_clone = app.clone();
 
+    // Send task
+    tokio::spawn(async move {
+        while let Some(msg_string) = rx.recv().await {
+            let msg = Message::Text(msg_string.into());
+            if write.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
 
-#[tauri::command]
-pub fn force_takeover(app: AppHandle) -> Result<(), String> {
-    let state = app.state::<Arc<ServerState>>();
-    let _ = state.force_disconnect_tx.send(());
-    *state.current_playback.lock().unwrap() = None;
+    // Receive task
+    tokio::spawn(async move {
+        while let Some(msg) = read.next().await {
+            if let Ok(Message::Text(text)) = msg {
+                
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
+                    let msg_type = json["type"].as_str().unwrap_or("");
+                    match msg_type {
+                        "search" => {
+                            let id = json["id"].as_str().unwrap_or("").to_string();
+                            let query = json["query"].as_str().unwrap_or("").to_string();
+                            let app_search_clone = app_clone.clone();
+                            tokio::spawn(async move {
+                                println!("Relay: Handling search for '{}'", query);
+                                match crate::search(query, app_search_clone.clone()).await {
+                                    Ok(res) => {
+                                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&res) {
+                                             send_ws_reply(&app_search_clone, id, val).await;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        println!("Relay: Search error: {}", e);
+                                        send_ws_reply(&app_search_clone, id, serde_json::json!({"error": e})).await;
+                                    }
+                                }
+                            });
+                        },
+                        "suggestions" => {
+                            let id = json["id"].as_str().unwrap_or("").to_string();
+                            let query = json["query"].as_str().unwrap_or("").to_string();
+                            let app_sug_clone = app_clone.clone();
+                            tokio::spawn(async move {
+                                println!("Relay: Handling suggestions for '{}'", query);
+                                match crate::suggestions(query, app_sug_clone.clone()).await {
+                                    Ok(res) => {
+                                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&res) {
+                                             send_ws_reply(&app_sug_clone, id, val).await;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        println!("Relay: Suggestions error: {}", e);
+                                        send_ws_reply(&app_sug_clone, id, serde_json::json!({"error": e})).await;
+                                    }
+                                }
+                            });
+                        },
+                        "process_yt" => {
+                            let id = json["id"].as_str().unwrap_or("").to_string();
+                            let query = json["query"].as_str().unwrap_or("").to_string();
+                            let app_proc_clone = app_clone.clone();
+                            tokio::spawn(async move {
+                                println!("Relay: Handling process_yt for '{}'", query);
+                                match crate::process_yt(query, app_proc_clone.clone()).await {
+                                    Ok(res) => {
+                                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&res) {
+                                             send_ws_reply(&app_proc_clone, id, val).await;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        println!("Relay: Process error: {}", e);
+                                        send_ws_reply(&app_proc_clone, id, serde_json::json!({"error": e})).await;
+                                    }
+                                }
+                            });
+                        },
+                        "client_joined" => {
+                             let state = app_clone.state::<crate::AppState>();
+                             let q = state.party_queue.lock().unwrap().clone();
+                             let msg = serde_json::json!({
+                                 "type": "sync_queue",
+                                 "queue": q
+                             });
+                             broadcast_ws(app_clone.clone(), msg).await;
+                        },
+                        "queue_add" => {
+                             if let Ok(req) = serde_json::from_value::<QueueRequest>(json["payload"].clone()) {
+                                 let state = app_clone.state::<crate::AppState>();
+                                 let updated_q = {
+                                     let mut q = state.party_queue.lock().unwrap();
+                                     if !q.iter().any(|item| item.video_id == req.video_id && item.device_id == req.device_id) {
+                                         q.push(req.clone());
+                                     }
+                                     q.clone()
+                                 };
+                                 
+                                 // Broadcast updated queue to everyone immediately
+                                 let msg = serde_json::json!({
+                                     "type": "sync_queue",
+                                     "queue": updated_q
+                                 });
+                                 broadcast_ws(app_clone.clone(), msg).await;
+                                 
+                                 let _ = app_clone.emit("party_add_to_queue", req);
+                             }
+                        },
+                        "queue_remove" => {
+                             if let Ok(req) = serde_json::from_value::<RemoveRequest>(json["payload"].clone()) {
+                                 let state = app_clone.state::<crate::AppState>();
+                                 let updated_q = {
+                                     let mut q = state.party_queue.lock().unwrap();
+                                     q.retain(|item| !(item.video_id == req.video_id && item.device_id == req.device_id));
+                                     q.clone()
+                                 };
+                                 
+                                 // Broadcast updated queue to everyone immediately
+                                 let msg = serde_json::json!({
+                                     "type": "sync_queue",
+                                     "queue": updated_q
+                                 });
+                                 broadcast_ws(app_clone.clone(), msg).await;
+                                 
+                                 let _ = app_clone.emit("party_remove_from_queue", req);
+                             }
+                        },
+                        "recommendations" => {
+                            let id = json["id"].as_str().unwrap_or("").to_string();
+                            let app_rec_clone = app_clone.clone();
+                            tokio::spawn(async move {
+                                println!("Relay: Handling recommendations");
+                                match crate::get_recommendations(app_rec_clone.clone()).await {
+                                    Ok(res) => {
+                                         send_ws_reply(&app_rec_clone, id, serde_json::json!(res)).await;
+                                    },
+                                    Err(e) => {
+                                        println!("Relay: Recommendations error: {}", e);
+                                        send_ws_reply(&app_rec_clone, id, serde_json::json!({"error": e})).await;
+                                    }
+                                }
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    });
+
     Ok(())
 }
 
-pub async fn start_server(app: AppHandle) -> Result<u16, String> {
-    let uploads_dir = app.state::<crate::AppState>().uploads_dir.clone();
-    let (force_tx, _) = tokio::sync::broadcast::channel(1);
-    let shared_state = Arc::new(ServerState { 
-        app: app.clone(),
-        connected_clients: Arc::new(std::sync::Mutex::new(0)),
-        force_disconnect_tx: force_tx,
-        current_playback: Arc::new(std::sync::Mutex::new(None)),
-        force_takeover_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+async fn send_ws_reply(app: &AppHandle, reply_to: String, payload: serde_json::Value) {
+    let msg = serde_json::json!({
+        "replyTo": reply_to,
+        "payload": payload
     });
-
-    let app_router = Router::new()
-        .route("/", get(handle_root))
-        .route("/api/ws", get(handle_ws))
-        .route("/api/search", get(handle_search))
-        .route("/api/suggestions", get(handle_suggestions))
-        .route("/api/process_yt", get(handle_process_yt))
-        .route("/api/queue", get(handle_get_queue).post(handle_queue))
-        .route("/api/remove_queue", post(handle_client_remove_queue))
-        .with_state(shared_state.clone())
-        .nest_service("/uploads", tower_http::services::ServeDir::new(uploads_dir))
-        .layer(
-            tower_http::cors::CorsLayer::new()
-                .allow_origin(tower_http::cors::Any)
-                .allow_methods(tower_http::cors::Any)
-                .allow_headers(tower_http::cors::Any)
-        );
-
-    app.manage(shared_state);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:1425").await.map_err(|e| e.to_string())?;
-    let port = listener.local_addr().unwrap().port();
-
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, app_router).await;
-    });
-
-    Ok(port)
+    broadcast_ws(app.clone(), msg).await;
 }
 
 #[tauri::command]
-pub fn get_party_url(app: AppHandle) -> Result<String, String> {
-    let state = app.state::<crate::AppState>();
-    let port_opt = state.party_port.lock().unwrap();
-    if let Some(port) = *port_opt {
-        if let Ok(ip) = local_ip().map(|ip_addr| ip_addr.to_string()) {
-            return Ok(format!("http://{}:{}", ip, port));
+pub async fn broadcast_ws(app: AppHandle, payload: serde_json::Value) {
+    if let Some(tx_arc) = app.try_state::<Arc<WsTx>>() {
+        let tx_opt = tx_arc.0.lock().unwrap().clone();
+        if let Some(tx) = tx_opt {
+            let msg_string = payload.to_string();
+            println!("Rust: Broadcasting to relay: {} chars", msg_string.len());
+            let _ = tx.send(msg_string).await;
+        } else {
+            println!("Rust: broadcast_ws failed - Sender is None");
         }
+    } else {
+        println!("Rust: broadcast_ws failed - WsTx state not found");
     }
-    Err("Party server NOT running".to_string())
+}
+
+#[tauri::command]
+pub fn remove_from_party_queue(app: AppHandle, video_id: String, device_id: String) {
+    let state = app.state::<crate::AppState>();
+    let mut q = state.party_queue.lock().unwrap();
+    q.retain(|item| !(item.video_id == video_id && item.device_id == device_id));
+    drop(q);
+    let _ = app.emit("party_remove_from_queue", RemoveRequest { video_id, device_id });
+}
+
+#[tauri::command]
+pub async fn stop_party_mode(app: AppHandle) -> Result<(), String> {
+    if let Some(tx_arc) = app.try_state::<Arc<WsTx>>() {
+        let mut tx_opt = tx_arc.0.lock().unwrap();
+        *tx_opt = None; // This drops the sender, which closes the mpsc channel, breaking the write loop and closing WS.
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_local_ip_addr() -> Result<String, String> {
+    use local_ip_address::local_ip;
+    local_ip()
+        .map(|ip| ip.to_string())
+        .map_err(|e| e.to_string())
 }
