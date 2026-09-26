@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use futures_util::{StreamExt, SinkExt};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use tower_http::services::{ServeDir, ServeFile};
+use tower_http::cors::CorsLayer;
+use std::net::SocketAddr;
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct QueueRequest {
@@ -25,39 +28,110 @@ pub struct RemoveRequest {
     pub device_id: String,
 }
 
+#[derive(Deserialize)]
+pub struct InvokeRequest {
+    pub cmd: String,
+    pub args: serde_json::Value,
+}
+
 // Global active websocket channel to allow the app to broadcast down the WS
-struct WsTx(std::sync::Mutex<Option<tokio::sync::mpsc::Sender<String>>>);
+struct WsTx(std::sync::Mutex<Option<tokio::sync::mpsc::Sender<Message>>>);
 
 #[tauri::command]
-pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, party_name: String, token: String) -> Result<(), String> {
-    
-    let ws_url = format!("{}/api/ws?party_id={}&token={}&role=host", relay_url.replace("http", "ws"), party_name, token);
+pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, jwt_token: String, party_name: String, party_id: String, token: String) -> Result<String, String> {
+    // Step 1: Create or reclaim party via REST endpoint
+    let http_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
 
+    let create_url = format!("{}/api/host/create", relay_url);
+    let mut body = serde_json::json!({ "partyName": party_name });
+    if !party_id.is_empty() && !token.is_empty() {
+        body["partyId"] = serde_json::json!(party_id);
+        body["token"] = serde_json::json!(token);
+    }
+
+    let response = http_client.post(&create_url)
+        .header("Authorization", format!("Bearer {}", jwt_token))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to create party on relay: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let err_body = response.text().await.unwrap_or_default();
+        return Err(format!("Relay rejected party creation: HTTP {} - {}", status, err_body));
+    }
+
+    let party_data: serde_json::Value = response.json()
+        .await
+        .map_err(|e| format!("Failed to parse relay response: {}", e))?;
+
+    let actual_party_id = party_data["partyId"].as_str()
+        .ok_or("Missing partyId in relay response")?.to_string();
+    let actual_token = party_data["token"].as_str()
+        .ok_or("Missing token in relay response")?.to_string();
+    let actual_name = party_data["partyName"].as_str()
+        .unwrap_or(&party_name).to_string();
+
+    println!("Rust: Party ready - name=\"{}\" id={}", actual_name, actual_party_id);
+
+    // Step 2: Connect WebSocket with server-issued credentials + Host JWT
+    let ws_url = format!("{}/api/ws?party_id={}&token={}&jwt={}&role=host", 
+        relay_url.replace("http", "ws"), 
+        actual_party_id, 
+        actual_token,
+        jwt_token
+    );
     let (ws_stream, _) = connect_async(ws_url.clone()).await.map_err(|e| e.to_string())?;
-    
     let (mut write, mut read) = futures_util::StreamExt::split(ws_stream);
+
+    // Clear any existing connection state first
+    if let Some(tx_arc) = app.try_state::<Arc<WsTx>>() {
+        let mut tx_opt = tx_arc.0.lock().unwrap();
+        *tx_opt = None; 
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(100);
     
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
-    app.manage(Arc::new(WsTx(std::sync::Mutex::new(Some(tx)))));
+    if let Some(tx_arc) = app.try_state::<Arc<WsTx>>() {
+        let mut tx_opt = tx_arc.0.lock().unwrap();
+        *tx_opt = Some(tx.clone());
+    } else {
+        app.manage(Arc::new(WsTx(std::sync::Mutex::new(Some(tx.clone())))));
+    }
 
     let app_clone = app.clone();
+    let tx_pong = tx.clone();
 
     // Send task
     tokio::spawn(async move {
-        while let Some(msg_string) = rx.recv().await {
-            let msg = Message::Text(msg_string.into());
+        while let Some(msg) = rx.recv().await {
             if write.send(msg).await.is_err() {
                 break;
             }
         }
     });
 
+    // Build result to return to frontend before spawning the long-lived receive task
+    let result = serde_json::json!({
+        "partyId": actual_party_id,
+        "partyName": actual_name,
+        "token": actual_token
+    });
+
     // Receive task
     tokio::spawn(async move {
         while let Some(msg) = read.next().await {
-            if let Ok(Message::Text(text)) = msg {
-                
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
+            if let Ok(msg) = msg {
+                match msg {
+                    Message::Ping(payload) => {
+                        let _ = tx_pong.send(Message::Pong(payload)).await;
+                    },
+                    Message::Text(text) => {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.as_str()) {
                     let msg_type = json["type"].as_str().unwrap_or("");
                     match msg_type {
                         "search" => {
@@ -124,7 +198,7 @@ pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, party_na
                                  "type": "sync_queue",
                                  "queue": q
                              });
-                             broadcast_ws(app_clone.clone(), msg).await;
+                             broadcast_ws(app_clone.clone(), msg, None).await;
                              
                              // Notify frontend so it can push a fresh sync_state
                              let _ = app_clone.emit("party_client_joined", {});
@@ -145,7 +219,7 @@ pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, party_na
                                      "type": "sync_queue",
                                      "queue": updated_q
                                  });
-                                 broadcast_ws(app_clone.clone(), msg).await;
+                                 broadcast_ws(app_clone.clone(), msg, None).await;
                                  
                                  let _ = app_clone.emit("party_add_to_queue", req);
                              }
@@ -164,7 +238,7 @@ pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, party_na
                                      "type": "sync_queue",
                                      "queue": updated_q
                                  });
-                                 broadcast_ws(app_clone.clone(), msg).await;
+                                 broadcast_ws(app_clone.clone(), msg, None).await;
                                  
                                  let _ = app_clone.emit("party_remove_from_queue", req);
                              }
@@ -188,11 +262,23 @@ pub async fn start_party_mode(app: tauri::AppHandle, relay_url: String, party_na
                         _ => {}
                     }
                 }
-            }
+            },
+            _ => {}
         }
+    } else {
+        break;
+    }
+}
+        
+println!("Rust: Party Relay connection lost.");
+        if let Some(tx_arc) = app_clone.try_state::<Arc<WsTx>>() {
+            let mut tx_opt = tx_arc.0.lock().unwrap();
+            *tx_opt = None;
+        }
+        let _ = app_clone.emit("party_mode_disconnected", ());
     });
 
-    Ok(())
+    Ok(result.to_string())
 }
 
 async fn send_ws_reply(app: &AppHandle, reply_to: String, payload: serde_json::Value) {
@@ -200,22 +286,39 @@ async fn send_ws_reply(app: &AppHandle, reply_to: String, payload: serde_json::V
         "replyTo": reply_to,
         "payload": payload
     });
-    broadcast_ws(app.clone(), msg).await;
+    broadcast_ws(app.clone(), msg, None).await;
 }
 
 #[tauri::command]
-pub async fn broadcast_ws(app: AppHandle, payload: serde_json::Value) {
-    if let Some(tx_arc) = app.try_state::<Arc<WsTx>>() {
-        let tx_opt = tx_arc.0.lock().unwrap().clone();
-        if let Some(tx) = tx_opt {
-            let msg_string = payload.to_string();
-            println!("Rust: Broadcasting to relay: {} chars", msg_string.len());
-            let _ = tx.send(msg_string).await;
-        } else {
-            println!("Rust: broadcast_ws failed - Sender is None");
+pub async fn broadcast_ws(app: AppHandle, payload: serde_json::Value, local_only: Option<bool>) {
+    let msg_string = payload.to_string();
+    let skip_relay = local_only.unwrap_or(false);
+
+    // 1. Relay Broadcast (Tauri -> Relay -> Mobile)
+    if !skip_relay {
+        if let Some(tx_arc) = app.try_state::<Arc<WsTx>>() {
+            let tx_opt = tx_arc.0.lock().unwrap().clone();
+            if let Some(tx) = tx_opt {
+                let _ = tx.try_send(Message::Text(msg_string.clone().into()));
+            }
         }
-    } else {
-        println!("Rust: broadcast_ws failed - WsTx state not found");
+    }
+
+    // 2. Local Broadcast (Tauri -> Local Server -> Browser/TV)
+    let state = app.state::<crate::AppState>();
+    let mut clients = state.local_ws_clients.lock().await;
+    let mut to_remove = Vec::new();
+
+    for (i, tx) in clients.iter().enumerate() {
+        if let Err(_) = tx.try_send(Message::Text(msg_string.clone().into())) {
+            to_remove.push(i);
+        }
+    }
+
+    if !to_remove.is_empty() {
+        for i in to_remove.into_iter().rev() {
+            clients.remove(i);
+        }
     }
 }
 
@@ -238,9 +341,338 @@ pub async fn stop_party_mode(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn start_http_server(app: tauri::AppHandle) -> Result<String, String> {
+    let state = app.state::<crate::AppState>();
+    
+    // Check if already running
+    {
+        let tx = state.local_server_tx.lock().unwrap();
+        if tx.is_some() {
+            return Ok("Server already running".to_string());
+        }
+    }
+
+    let uploads_dir = state.uploads_dir.clone();
+    let separate_dir = state.app_data_dir.join("separate");
+    
+    // In production, assets are in the resource directory
+    let resource_dir = app.path().resource_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dist_dir_prod = resource_dir.join("dist");
+
+    // Fallback search logic
+    let final_dist_dir = if dist_dir_prod.exists() {
+        dist_dir_prod
+    } else {
+        // Try searching standard development paths
+        let mut p = std::env::current_dir().unwrap_or_default();
+        let mut found = false;
+        
+        // Check current, current/frontend, current/..
+        for base in [p.clone(), p.join("frontend"), p.parent().unwrap_or(&p).to_path_buf()] {
+            let check = base.join("dist");
+            if check.join("index.html").exists() {
+                p = check;
+                found = true;
+                break;
+            }
+        }
+        
+        if !found {
+            // Last ditch effort: search up from the executable
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(parent) = exe.parent() {
+                    let check = parent.join("dist");
+                    if check.exists() {
+                        p = check;
+                        found = true;
+                    }
+                }
+            }
+        }
+        p
+    };
+
+    println!("Local Presentation Mode: Serving UI from {:?}", final_dist_dir);
+
+    // One more check to see if we're actually at the right place
+    if !final_dist_dir.join("index.html").exists() {
+        println!("WARNING: index.html not found in {:?}", final_dist_dir);
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut state_tx = state.local_server_tx.lock().unwrap();
+        *state_tx = Some(tx);
+    }
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], 1425));
+    
+    let config = crate::get_config_internal(&app);
+    let mut library_dir = config.raw_library_folder.clone();
+    if library_dir.trim().is_empty() {
+        library_dir = uploads_dir.clone().to_string_lossy().to_string();
+    }
+
+    tokio::spawn(async move {
+        let index_path = final_dist_dir.join("index.html");
+        let router = axum::Router::new()
+            .nest_service("/uploads", ServeDir::new(uploads_dir))
+            .nest_service("/separate", ServeDir::new(separate_dir))
+            .nest_service("/library", ServeDir::new(library_dir))
+            .route("/invoke", axum::routing::post(handle_http_invoke))
+            .route("/api/ws", axum::routing::get(handle_local_ws))
+            .fallback_service(
+                ServeDir::new(&final_dist_dir)
+                    .fallback(ServeFile::new(index_path))
+            )
+            .layer(CorsLayer::permissive())
+            .with_state(app.clone());
+
+        let listener = match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                println!("Failed to bind HTTP server: {}", e);
+                return;
+            }
+        };
+
+        println!("Local UI Server listening on http://{}", addr);
+        if let Err(e) = axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = rx.await;
+                println!("HTTP Server shutting down");
+            })
+            .await {
+                println!("HTTP Server error: {}", e);
+            }
+    });
+
+    Ok(format!("http://{}:1425", get_local_ip_addr().unwrap_or("localhost".to_string())))
+}
+
+#[tauri::command]
+pub fn stop_http_server(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<crate::AppState>();
+    let mut tx_opt = state.local_server_tx.lock().unwrap();
+    if let Some(tx) = tx_opt.take() {
+        let _ = tx.send(());
+    }
+    Ok(())
+}
+
+async fn handle_http_invoke(
+    axum::extract::State(app): axum::extract::State<AppHandle>,
+    axum::Json(req): axum::Json<InvokeRequest>,
+) -> impl axum::response::IntoResponse {
+    let cmd = req.cmd.as_str();
+    let args = req.args;
+
+    match cmd {
+        "search" => {
+            let q = args["query"].as_str().unwrap_or_default().to_string();
+            match crate::search_internal(q, app).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(res)).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "suggestions" => {
+            let q = args["query"].as_str().unwrap_or_default().to_string();
+            match crate::suggestions_internal(q, app).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(res)).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "process_yt" => {
+            let vid = args["videoId"].as_str().unwrap_or_default().to_string();
+            match crate::process_yt_internal(vid, app).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(res)).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "get_app_config" => {
+            let config = crate::get_app_config_internal(app);
+            axum::response::Response::builder()
+                .header("Content-Type", "application/json")
+                .body(axum::body::Body::from(serde_json::to_string(&config).unwrap())).unwrap()
+        },
+        "get_recommendations" => {
+            match crate::get_recommendations_internal(app).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(serde_json::to_string(&res).unwrap())).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "search_lrclib" => {
+            let q = args["query"].as_str().unwrap_or_default().to_string();
+            match crate::search_lrclib_internal(q).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(serde_json::to_string(&res).unwrap())).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "get_lyrics_status" => {
+            let vid = args["videoId"].as_str().unwrap_or_default().to_string();
+            match crate::get_lyrics_status_internal(vid, app).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(serde_json::to_string(&res).unwrap())).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "check_gpu_status" => {
+            match crate::check_gpu_status_internal(app).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(serde_json::to_string(&res).unwrap())).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "apply_alternative_lyrics" => {
+            let vid = args["videoId"].as_str().unwrap_or_default().to_string();
+            let lyrics = args["lyricsText"].as_str().unwrap_or_default().to_string();
+            let lrclib_id = args["lrclibId"].as_i64();
+            match crate::apply_alternative_lyrics_internal(vid, lyrics, lrclib_id, app).await {
+                Ok(res) => axum::response::Response::builder()
+                    .header("Content-Type", "application/json")
+                    .body(axum::body::Body::from(res)).unwrap(),
+                Err(e) => axum::response::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from(e)).unwrap(),
+            }
+        },
+        "set_config" => {
+            let config_val = args["config"].clone();
+            if let Ok(config) = serde_json::from_value::<crate::AppConfig>(config_val) {
+                match crate::set_config_internal(config, app) {
+                    Ok(_) => axum::response::Response::builder()
+                        .header("Content-Type", "application/json")
+                        .body(axum::body::Body::from("null")).unwrap(),
+                    Err(e) => axum::response::Response::builder()
+                        .status(500)
+                        .body(axum::body::Body::from(e)).unwrap(),
+                }
+            } else {
+                axum::response::Response::builder()
+                    .status(400)
+                    .body(axum::body::Body::from("Invalid config payload")).unwrap()
+            }
+        },
+        _ => axum::response::Response::builder()
+            .status(404)
+            .body(axum::body::Body::from("Command not found via HTTP proxy")).unwrap(),
+    }
+}
+
+#[tauri::command]
 pub fn get_local_ip_addr() -> Result<String, String> {
     use local_ip_address::local_ip;
     local_ip()
         .map(|ip| ip.to_string())
         .map_err(|e| e.to_string())
+}
+
+async fn handle_local_ws(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    axum::extract::State(app): axum::extract::State<AppHandle>,
+) -> impl axum::response::IntoResponse {
+    ws.on_upgrade(move |socket| handle_socket(socket, app))
+}
+
+async fn handle_socket(socket: axum::extract::ws::WebSocket, app: AppHandle) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(100);
+    
+    {
+        let state = app.state::<crate::AppState>();
+        let mut clients = state.local_ws_clients.lock().await;
+        clients.push(tx);
+        println!("Local Presentation: Client connected. Total clients: {}", clients.len());
+    }
+
+    // Notify host that a presentation client connected
+    let _ = app.emit("party_client_joined", {});
+
+    let app_read = app.clone();
+
+    // Task: forward outbound messages to the browser client
+    let send_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            let axum_msg = match msg {
+                Message::Text(t) => axum::extract::ws::Message::Text(t.as_str().into()),
+                Message::Binary(b) => axum::extract::ws::Message::Binary(b.into()),
+                Message::Ping(p) => axum::extract::ws::Message::Ping(p.into()),
+                Message::Pong(p) => axum::extract::ws::Message::Pong(p.into()),
+                _ => continue,
+            };
+            
+            if ws_sender.send(axum_msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Task: read messages FROM the browser client and emit as Tauri events
+    let recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = ws_receiver.next().await {
+            if let axum::extract::ws::Message::Text(text) = msg {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    let msg_type = json["type"].as_str().unwrap_or("");
+                    match msg_type {
+                        "presentation_play" => {
+                            println!("Local Presentation: Received play signal from presentation screen");
+                            let _ = app_read.emit("presentation_play", {});
+                        },
+                        "presentation_pause" => {
+                            println!("Local Presentation: Received pause signal from presentation screen");
+                            let _ = app_read.emit("presentation_pause", {});
+                        },
+                        "sync_state" => {
+                            println!("Local Presentation: Received sync_state from presentation screen");
+                            let _ = app_read.emit("presentation_sync_state", json.clone());
+                            if let Some(tx_arc) = app_read.try_state::<Arc<WsTx>>() {
+                                let tx_opt = tx_arc.0.lock().unwrap().clone();
+                                if let Some(tx) = tx_opt {
+                                    let msg_string = json.to_string();
+                            let _ = tx.try_send(Message::Text(msg_string.into()));
+                                }
+                            }
+                        },
+                        _ => {
+                            println!("Local Presentation: Unknown message type: {}", msg_type);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Wait for either task to finish (connection closed)
+    tokio::select! {
+        _ = send_task => {},
+        _ = recv_task => {},
+    }
+
+    println!("Local Presentation: Client disconnected.");
 }

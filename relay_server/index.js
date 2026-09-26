@@ -1,14 +1,27 @@
 const express = require('express');
-const { WebSocketServer } = require('ws');
-const path = require('path');
-const cors = require('cors');
-const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
+const path = require('path');
+const cors = require('cors');
+const { WebSocketServer } = require('ws');
+const crypto = require('crypto');
+
+const { pool, initDb } = require('./db');
+const { 
+    hashPassword, comparePassword, generateJwt, 
+    apiAuthMiddleware, authenticateWs 
+} = require('./auth');
+
+const parties = new Map();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+
+// Initialize Database
+initDb().catch(err => {
+    console.error('❌ Failed to initialize database:', err);
+    process.exit(1);
+});
 
 app.use(cors());
 app.use(express.json());
@@ -28,6 +41,7 @@ httpServer.listen(HTTP_PORT, () => {
 
 // 2. Secure HTTPS Server (Using Native Windows PFX Bundle)
 const pfxPath = path.join(__dirname, 'certificate.pfx');
+let wssSecure;
 
 if (fs.existsSync(pfxPath)) {
     try {
@@ -36,7 +50,7 @@ if (fs.existsSync(pfxPath)) {
             passphrase: process.env.PFX_PASSPHRASE // Password set during native generation
         };
         const httpsServer = https.createServer(options, app);
-        const wssSecure = new WebSocketServer({ server: httpsServer });
+        wssSecure = new WebSocketServer({ server: httpsServer });
         
         wssSecure.on('connection', (ws, req) => wss.emit('connection', ws, req));
 
@@ -50,40 +64,115 @@ if (fs.existsSync(pfxPath)) {
     console.log('⚠️ certificate.pfx not found. Mobile WakeLock may fail.');
 }
 
-// Global WebSocket logic (already handled by mirroring above if HTTPS is on)
+// --- Public Auth Routes ---
 
-// Mappings
-// partyId -> { hostWs: WebSocket, token: string, clients: Set<WebSocket> }
-const parties = new Map();
+app.post('/api/auth/register', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Missing username/password' });
+    
+    try {
+        const hashedPassword = await hashPassword(password);
+        const result = await pool.query(
+            'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id',
+            [username, hashedPassword]
+        );
+        res.status(201).json({ success: true, userId: result.rows[0].id });
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ error: 'Username already exists' });
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
-// Generate Random ID
-function generatePartyId() {
-    return Math.random().toString(36).substring(2, 6).toUpperCase();
-}
+app.post('/api/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const result = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+        const user = result.rows[0];
+        if (!user || !(await comparePassword(password, user.password_hash))) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const token = generateJwt(user);
+        res.json({ token, username: user.username });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
-function generateToken() {
-    return crypto.randomBytes(16).toString('hex');
-}
+// Apply auth middleware to all routes below this line
+app.use('/api', apiAuthMiddleware(parties));
+
+
 
 // REST Endpoints for Desktop Host to Initialize
 app.post('/api/host/create', (req, res) => {
-    let partyId = req.body.partyId || generatePartyId();
-    // basic sanity limit
-    partyId = partyId.replace(/[^a-zA-Z0-9-]/g, '').toUpperCase();
-    
-    const token = generateToken();
-    
-    // Reserve the party
+    // Only users with a valid JWT (req.user) can create parties
+    if (!req.user) {
+        return res.status(403).json({ error: "Only registered hosts can create parties" });
+    }
+
+    const partyName = (req.body.partyName || 'Party').substring(0, 32).trim();
+    const existingPartyId = req.body.partyId;
+    const existingToken = req.body.token;
+
+    // --- Reconnect flow: reclaim an existing party ---
+    if (existingPartyId && existingToken) {
+        const existing = parties.get(existingPartyId);
+        if (existing && existing.token === existingToken) {
+            // Close stale host socket if still lingering
+            if (existing.hostWs && existing.hostWs.readyState === 1) {
+                existing.hostWs.close();
+            }
+            existing.hostWs = null;
+            console.log(`[Relay] Party reclaimed: "${existing.partyName}" (${existingPartyId}) by ${req.user.username}`);
+            return res.json({
+                partyId: existingPartyId,
+                partyName: existing.partyName || partyName,
+                token: existingToken
+            });
+        }
+    }
+
+    // --- New party: hash partyName + GUID into a secure partyId ---
+    const guid = crypto.randomUUID();
+    const raw = `${partyName}-${guid}`;
+    const partyId = crypto.createHash('sha256').update(raw).digest('hex').substring(0, 12).toUpperCase();
+    const token = crypto.randomBytes(32).toString('hex');
+
     parties.set(partyId, {
         hostWs: null,
+        hostUser: req.user.username,
         token: token,
+        partyName: partyName,
         clients: new Set(),
+        deviceClients: new Map(),
         reqIdCounter: 0,
-        pendingRequests: new Map(), // reqId -> Express Res object
+        pendingRequests: new Map(),
         currentMetadata: null
     });
+
+    console.log(`[Relay] Party created by ${req.user.username}: "${partyName}" -> ${partyId}`);
+    res.json({ partyId, partyName, token });
+});
+
+app.get('/api/host/parties', (req, res) => {
+    if (!req.user) {
+        return res.status(401).json({ error: "Authenticated host session required" });
+    }
     
-    res.json({ partyId, token, wssUrl: `ws://${req.get('host')}` });
+    const userParties = [];
+    for (const [id, party] of parties.entries()) {
+        if (party.hostUser === req.user.username) {
+            userParties.push({
+                partyId: id,
+                partyName: party.partyName,
+                token: party.token,
+                status: (party.hostWs && party.hostWs.readyState === 1) ? 'online' : 'offline'
+            });
+        }
+    }
+    res.json(userParties);
 });
 
 app.post('/api/party/metadata', (req, res) => {
@@ -102,51 +191,72 @@ app.get('/api/party/metadata', (req, res) => {
     const partyId = req.query.party_id?.toUpperCase();
     const party = parties.get(partyId);
     if (!party) return res.status(404).json({ error: "Party not found" });
+    // Token/Auth check is handled by apiAuthMiddleware (Path 2: Party token)
     res.json(party.currentMetadata || {});
 });
 
+// Periodic Cleanup for parties with no host for too long
+setInterval(() => {
+    const now = Date.now();
+    for (const [partyId, party] of parties.entries()) {
+        const hasActiveHost = party.hostWs && party.hostWs.readyState === 1;
+        if (!hasActiveHost) {
+            // If no host for more than 5 minutes, cleanup the whole party
+            if (!party.disconnectTime) {
+                party.disconnectTime = now;
+            } else if (now - party.disconnectTime > 300000) {
+                console.log(`[Relay] Cleaning up stale party: ${partyId}`);
+                for (let client of party.clients) {
+                    client.send(JSON.stringify({ type: 'error', message: 'Party session expired' }));
+                    client.close();
+                }
+                parties.delete(partyId);
+            }
+        } else {
+            party.disconnectTime = null;
+        }
+    }
+}, 60000);
+
 // WebSocket Connection Handler
 wss.on('connection', (ws, req) => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const partyId = url.searchParams.get('party_id')?.toUpperCase();
-    const token = url.searchParams.get('token');
-    const role = url.searchParams.get('role'); // 'host' or 'client'
+    const authResult = authenticateWs(url, parties);
     
-    if (!partyId) {
-        ws.send(JSON.stringify({ error: "Missing Party ID" }));
+    if (!authResult.ok) {
+        ws.send(JSON.stringify({ error: "Authentication failed" }));
         return ws.close();
     }
 
-    // Auto-create party if connector is Host and it doesn't exist
-    if (role === 'host' && !parties.has(partyId)) {
-        console.log(`Creating new party session: ${partyId}`);
-        parties.set(partyId, {
-            hostWs: null,
-            token: token, // The first host to connect sets the token
-            clients: new Set(),
-            deviceClients: new Map(), // deviceId -> Set of WebSockets
-            reqIdCounter: 0,
-            pendingRequests: new Map(),
-            currentMetadata: null
-        });
-    }
+    const { user, partyAuth, partyId, partyToken } = authResult;
+    const role = url.searchParams.get('role'); // 'host' or 'client'
+    const token = partyToken;
 
-    if (!parties.has(partyId)) {
+    if (!partyId || !parties.has(partyId)) {
         ws.send(JSON.stringify({ error: "Party not found" }));
         return ws.close();
     }
     
     const party = parties.get(partyId);
     
-    // HOST connection
+    // HOST connection requirements
     if (role === 'host') {
-        if (party.token !== token) {
-            ws.send(JSON.stringify({ error: "Invalid Host Token" }));
+        if (!user) {
+            ws.send(JSON.stringify({ error: "Host connection requires a valid account login." }));
             return ws.close();
         }
         
+        // Re-claiming: close any stale host socket
+        if (party.hostWs && party.hostWs.readyState === 1) {
+            console.log(`[Relay] Host re-claiming session: ${partyId} by ${user.username}`);
+            party.hostWs.close();
+        }
+
         party.hostWs = ws;
-        console.log(`Host connected to party ${partyId}`);
+        console.log(`[Relay] Host connected to party ${partyId} (User: ${user.username})`);
         
         ws.on('message', (message) => {
             try {
@@ -196,19 +306,19 @@ wss.on('connection', (ws, req) => {
         
         ws.on('close', () => {
             console.log(`Host disconnected from party ${partyId}`);
-            parties.delete(partyId);
-            for (let clientWs of party.clients) {
-                clientWs.send(JSON.stringify({ type: 'error', message: 'Host disconnected' }));
-                clientWs.close();
-            }
+            party.hostWs = null;
+            party.disconnectTime = Date.now();
+            // Don't delete the party or disconnect clients — let the 5-min cleanup interval handle it.
+            // The host can reconnect and reclaim the party, and clients keep their cached state.
         });
     } 
     // CLIENT connection
     else if (role === 'client') {
         const deviceId = url.searchParams.get('device_id');
         
-        if (token && party.token !== token) {
-            ws.send(JSON.stringify({ error: "Invalid Access Token" }));
+        // Token is MANDATORY for client connections
+        if (!token || party.token !== token) {
+            ws.send(JSON.stringify({ error: "Invalid or missing access token" }));
             return ws.close();
         }
         
@@ -232,10 +342,19 @@ wss.on('connection', (ws, req) => {
             party.hostWs.send(JSON.stringify({ type: 'client_joined' }));
         }
         
+        const ALLOWED_CLIENT_TYPES = new Set(['queue_add', 'queue_remove', 'search', 'suggestions', 'process_yt', 'recommendations', 'lyrics', 'sync_state']);
         ws.on('message', (message) => {
-            // Forward client actions directly to host
-            if (party.hostWs && party.hostWs.readyState === 1) {
-                party.hostWs.send(message.toString());
+            try {
+                const data = JSON.parse(message.toString());
+                if (!data.type || !ALLOWED_CLIENT_TYPES.has(data.type)) {
+                    console.warn(`[Relay] Blocked unknown client message type: ${data.type}`);
+                    return;
+                }
+                if (party.hostWs && party.hostWs.readyState === 1) {
+                    party.hostWs.send(message.toString());
+                }
+            } catch (e) {
+                console.warn('[Relay] Blocked malformed client message');
             }
         });
         
@@ -249,6 +368,22 @@ wss.on('connection', (ws, req) => {
             }
         });
     }
+});
+
+// Primary Heartbeat interval
+const interval = setInterval(() => {
+    [wss, wssSecure].forEach(currentWss => {
+        if (!currentWss) return;
+        currentWss.clients.forEach((ws) => {
+            if (ws.isAlive === false) return ws.terminate();
+            ws.isAlive = false;
+            ws.ping();
+        });
+    });
+}, 30000);
+
+wss.on('close', () => {
+    clearInterval(interval);
 });
 
 // REST proxy endpoints for clients

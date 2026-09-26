@@ -2,9 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw, Cpu, Monitor, Check, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
-import { invoke as tauriInvoke } from '@tauri-apps/api/core';
-import { convertFileSrc as tauriConvertFileSrc } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import KaraokePlayer from './components/KaraokePlayer';
+// Tauri imports are loaded dynamically to prevent browser crashes
 import { QRCodeSVG } from 'qrcode.react';
 
 const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUMgIi0vL1czQy8vRFREIFNWRyAxLjEvL0VOIiAiaHR0cDovL3d3dy53My5vcmcvR3JhcGhpY3MvU1ZHLzEuMS9EVEQvc3ZnMTEuZHRkIj4KDTwhLS0gVXBsb2FkZWQgdG86IFNWRyBSZXBvLCB3d3cuc3ZncmVwby5jb20sIFRyYW5zZm9ybWVkIGJ5OiBTVkcgUmVwbyBNaXhlciBUb29scyAtLT4KPHN2ZyB3aWR0aD0iMTkzcHgiIGhlaWdodD0iMTkzcHgiIHZpZXdCb3g9Ii02LjQ4IC02LjQ4IDM2LjYgMzYuOTYiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+Cg08ZyBpZD0iU1ZHUmVwb19iZ0NhcnJpZXIiIHN0cm9rZS13aWR0aD0iMCI+Cg08cmVjdCB4PSItNi40OCIgeT0iLTYuNDgiIHdpZHRoPSIzNi45NiIgaGVpZ2h0PSIzNi45NiIgcng9IjIuOTU2OCIgZmlsbD0iIzI5MjkyOSIgc3Ryb2tlLXdpZHRoPSIwIi8+Cg08L2c+Cg08ZyBpZD0iU1ZHUmVwb190cmFjZXJDYXJyaWVyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KDTxnIGlkPSJTVkdSZXBvX2ljb25DYXJyaWVyIj4gPHBhdGggZD0iTTEyLjc1IDEyLjUwOEwyMS4yNSA5LjEwOFYxNC43NjA5QzIwLjc0NDkgMTQuNDM3NSAyMC4xNDQzIDE0LjI1IDE5LjUgMTQuMjVDMTcuNzA1MSAxNC4yNSAxNi4yNSAxNS43MDUxIDE2LjI1IDE3LjVDMTYuMjUgMTkuMjk0OSAxNy43MDUxIDIwLjc1IDE5LjUgMjAuNzVDMjEuMjk0OSAyMC43NSAyMi43NSAxOS4yOTQ5IDIyLjc1IDE3LjVDMjIuNzUgMTcuNSAyMi43NSAxNy41IDIyLjc1IDE3LjVMMjIuNzUgNy45NDYyNUMyMi43NSA2LjgwMzQyIDIyLjc1IDUuODQ0OTYgMjIuNjY5NiA1LjA4MTMxQzIyLjY1ODIgNC45NzMzOSAyMi42NDQ4IDQuODY2MDkgMjIuNjMgNC43NjU5N0MyMi41NTI1IDQuMjQ0MjYgMjIuNDE1NiAzLjc1NzU3IDIyLjE1MTQgMy4zNTExNUMyMi4wMTkzIDMuMTQ3OTQgMjEuODU1MyAyLjk2NDgxIDIxLjY1MTEgMi44MDczOUMyMS42MTI4IDIuNzc3ODggMjEuNTczIDIuNzQ5MjcgMjEuNTMxOSAyLjcyMTZMMjEuNTIzNiAyLjcxNjA4QzIwLjgxNjQgMi4yNDU0IDIwLjAyMTMgMi4yNzkwNiAxOS4yMDIzIDIuNDg3NzdDMTguNDEwMiAyLjY4OTYxIDE3LjQyODIgMy4xMDA2NSAxNi4yMjQgMy42MDQ2OUwxNC4xMyA0LjQ4MTE1QzEzLjU2NTUgNC43MTczNyAxMy4wODczIDQuOTE3NTEgMTIuNzEyIDUuMTI0OEMxMi4zMTI2IDUuMzQ1MzUgMTEuOTY4NiA1LjYwNTQ4IDExLjcxMDYgNS45OTMxMUMxMS40NTI3IDYuMzgwNzUgMTEuMzQ1NSA2Ljc5ODUgMTEuMjk2MyA3LjI1MjA0QzExLjI1IDcuNjc4MzEgMTEuMjUgOC4xOTY3MSAxMS4yNSA4LjgwODU4VjE2Ljc2MDlDMTAuNzQ0OCAxNi40Mzc1IDEwLjE0NDMgMTYuMjUgOS41IDE2LjI1QzcuNzA1MDcgMTYuMjUgNi4yNSAxNy43MDUxIDYuMjUgMTkuNUM2LjI1IDIxLjI5NDkgNy43MDUwNyAyMi43NSA5LjUgMjIuNzVDMTEuMjk0OSAyMi43NSAxMi43NSAyMS4yOTQ5IDEyLjczIDE5LjVDMTIuNzUgMTkuNSAxMi43NSAxOS41IDEyLjczIDE5LjVMMTIuNzUgMTIuNTA4WiIgZmlsbD0iI2ZmZmZmZiIvPiA8cGF0aCBvcGFjaXR5PSIwLjUiIGQ9Ik03Ljc1IDJDNy43NSAxLjU4NTc5IDcuNDE0MjEgMS4yNSA3IDEuMjVDNi41ODU3OSAxLjI1IDYuMjUgMS41ODU3OSA2LjI1IDJWNy43NjA5MUM1Ljc0NDg1IDcuNDM3NSA1LjE0NDMyIDcuMjUgNC41IDcuMjVDMi43MDUwNyA3LjI1IDEuMjUgOC43MDUwNyAxLjI1IDEwLjVDMS4yNSAxMi4yOTQ5IDIuNzA1MDcgMTMuNzUgNC41IDEzLjc1QzYuMjk0OTMgMTMuNzUgNy43NSAxMi4yOTQ5IDcuNzUgMTAuNVY1LjAwNDVDOC40NDg1MiA1LjUwOTEzIDkuMjc5NTUgNS43NSAxMCA1Ljc1QzEwLjQxNDIgNS43NSAxMC43NSA1LjQxNDIxIDEwLjc1IDVDMTAuNzUgNC41ODU3OSAxMC40MTQyIDQuMjUgMTAgNC4yNUM5LjU0NTY1IDQuMjUgOC45NjYzIDQuMDczODkgOC41MTE1OSAzLjY5ODM3QzguMDc4NCAzLjM0MDYxIDcuNzUgMi43OTc4NSA3Ljc1IDJaIiBmaWxsPSIjZmZmZmZmIi8+IDwvZz4KDTwvc3ZnPg==`;
@@ -20,52 +19,103 @@ const isMobile = () => {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 };
 
-const isTauri = typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__;
+const isPresentationView = typeof window !== 'undefined' && window.location.href.toLowerCase().includes('view=presentation');
 
-const invoke = async (cmd, args = {}) => {
-    if (isTauri) {
-        return tauriInvoke(cmd, args);
+const isTauri = typeof window !== 'undefined' && 
+                window.__TAURI_INTERNALS__ !== undefined && 
+                !isPresentationView;
+
+const appListen = async (event, handler) => {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+        try {
+            // We still need the event module for listen because it's complex
+            // but we'll only import it if we are sure we are in Tauri
+            const { listen } = await import('@tauri-apps/api/event');
+            return await listen(event, handler);
+        } catch (e) {
+            console.error(`Tauri listen error for ${event}:`, e);
+            return () => {};
+        }
     }
+    return () => {};
+};
+
+const appInvoke = async (cmd, args = {}) => {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+        try {
+            // Use the raw invoke from internals to avoid package-level side effects
+            return await window.__TAURI_INTERNALS__.invoke(cmd, args);
+        } catch (e) {
+            console.error(`Tauri invoke error for ${cmd}:`, e);
+            throw e;
+        }
+    }
+    
+    // For browser (presentation view or party client)
     try {
-        if (cmd === 'search') {
-            const response = await fetch(`/api/search?query=${encodeURIComponent(args.query || '')}`);
-            const data = await response.json();
-            return JSON.stringify(data);
-        } else if (cmd === 'suggestions') {
-            const response = await fetch(`/api/suggestions?query=${encodeURIComponent(args.query || '')}`);
-            const data = await response.json();
-            return JSON.stringify(data);
-        } else if (cmd === 'process_yt') {
-            const response = await fetch(`/api/process_yt?query=${encodeURIComponent(args.videoId || '')}`);
-            const data = await response.json();
-            return JSON.stringify(data);
-        } else {
-            const response = await fetch(`/invoke`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cmd, args })
-            });
-            const text = await response.text();
+        const response = await fetch(`/invoke`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cmd, args })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Command failed with status ${response.status}`);
+        }
+
+        const text = await response.text();
+        try {
+            return JSON.parse(text);
+        } catch (e) {
             return text;
         }
     } catch (e) {
-        console.error(`Invoke error for ${cmd}:`, e);
+        console.error(`Local invoke error for ${cmd}:`, e);
+        // Fallback for relay API if applicable
+        if (cmd === 'search' || cmd === 'suggestions' || cmd === 'process_yt') {
+             const route = cmd === 'process_yt' ? 'process_yt?query=' : `${cmd}?query=`;
+             const response = await fetch(`/api/${route}${encodeURIComponent(args.query || args.videoId || '')}`);
+             const data = await response.json();
+             return JSON.stringify(data);
+        }
         throw e;
     }
 };
 
-const convertFileSrc = (path) => {
+const appConvertFileSrc = async (path) => {
     if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
-        return tauriConvertFileSrc(path);
+        try {
+            const { convertFileSrc } = await import('@tauri-apps/api/core');
+            return convertFileSrc(path);
+        } catch (e) {
+            console.error("convertFileSrc failed", e);
+        }
     }
     if (!path) return "";
+    
+    // In Browser, we assume the file name is unique and served from either /uploads or /library
+    // The backend now hosts both. We try to infer which one to use.
     const filename = path.split(/[\\/]/).pop();
     const protocol = window.location.protocol;
     const host = window.location.hostname;
-    return `${protocol}//${host}:1425/uploads/${filename}`;
+    const port = 1425;
+    
+    // Most processed files are in uploads. Original ones are in library.
+    // For simplicity, we can default to /uploads and fallback to /library if we had more info,
+    // but usually files have tags like _(Instrumental) if they are processed.
+    const isLibrary = !path.includes('uploads') && !path.includes('separate');
+    const folder = isLibrary ? 'library' : 'uploads';
+    
+    return `${protocol}//${host}:${port}/${folder}/${filename}`;
 };
 
 function App() {
+    // safe wrappers to prevent browser crashes
+    const listen = appListen; 
+    const invoke = appInvoke;
+    const convertFileSrc = appConvertFileSrc;
+
+
     const [setupStatus, setSetupStatus] = useState("Checking dependencies...");
     const [isLockedByWeb, setIsLockedByWeb] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -101,12 +151,37 @@ function App() {
                             alert("Disconnected: Display taken over by another screen.");
                         } else if (data.type === 'sync_state') {
                             const payload = data.payload;
-                            if (payload.currentSong) {
-                                setLyricsData(payload.lyricsData || []); // Load lyrics directly from sync!
-                                setCurrentSong(payload.currentSong);
-                                setKaraokeMode(payload.isKaraokeMode);
-                                setResumeTime(payload.currentTime);
-                                setIsAutoPaused(!payload.isPlaying);
+                            if (payload.lyricsData) {
+                                setLyricsData(payload.lyricsData);
+                            }
+                            if (payload.audioMode) {
+                                setAudioMode(payload.audioMode);
+                            }
+                            
+                            // Resolve local URLs for web clients
+                            const processedSong = payload.currentSong ? { ...payload.currentSong } : null;
+                            if (processedSong && !isTauri) {
+                                const resolveWebUrl = (path) => {
+                                    if (!path) return "";
+                                    if (path.startsWith('http') && !path.includes('asset.localhost') && !path.includes('localhost:1425')) return path;
+                                    
+                                    const decodedPath = decodeURIComponent(path);
+                                    const filename = decodedPath.split(/[\\/]/).pop();
+                                    const isLibrary = !decodedPath.includes('uploads') && !decodedPath.includes('separate');
+                                    const folder = isLibrary ? 'library' : (decodedPath.includes('separate') ? 'separate' : 'uploads');
+                                    
+                                    return `${window.location.protocol}//${window.location.hostname}:1425/${folder}/${filename}`;
+                                };
+                                processedSong.instrumentalUrl = resolveWebUrl(processedSong.instrumentalUrl);
+                                processedSong.vocalsUrl = resolveWebUrl(processedSong.vocalsUrl);
+                            }
+
+                            setCurrentSong(processedSong);
+                            setIsPlaying(payload.isPlaying);
+                            setIsAutoPaused(!payload.isPlaying);
+                            
+                            if (audioRef.current && Math.abs(audioRef.current.currentTime - payload.currentTime) > 1.5) {
+                                audioRef.current.currentTime = payload.currentTime;
                             }
                         } else if (data.type === 'error' && data.message === 'locked') {
                             setIsLockedByWeb(true);
@@ -134,6 +209,8 @@ function App() {
 
         let unlistenLock;
         let unlistenForce;
+        let unlistenDisconnect;
+
         const listenWebStatus = async () => {
             unlistenLock = await listen('web_viewer_status', (event) => {
                 setIsLockedByWeb(!!event.payload);
@@ -143,16 +220,37 @@ function App() {
                 setKaraokeMode(false);
                 setCurrentSong(null);
             });
+            unlistenDisconnect = await listen('party_mode_disconnected', () => {
+                setIsPartyMode(false);
+                setPartyUrl("");
+                setConfirmModal({
+                    isOpen: true,
+                    title: "Relay Lost",
+                    message: "Connection to the party relay was lost. You are now offline.",
+                    type: 'error'
+                });
+            });
         };
         listenWebStatus();
         return () => {
-            if (unlistenLock && typeof unlistenLock === 'function') unlistenLock();
-            if (unlistenForce && typeof unlistenForce === 'function') unlistenForce();
+            if (unlistenLock) unlistenLock();
+            if (unlistenForce) unlistenForce();
+            if (unlistenDisconnect) unlistenDisconnect();
         }
+
     }, [reconnectTrigger]);
 
+    // Party mode cleanup on refresh
+    useEffect(() => {
+        return () => {
+            if (isTauri) {
+                invoke('stop_party_mode').catch(console.error);
+            }
+        };
+    }, []);
+
     const handleTauriTakeover = async () => {
-        await tauriInvoke('force_takeover');
+        await invoke('force_takeover');
         setIsLockedByWeb(false);
     };
 
@@ -163,7 +261,7 @@ function App() {
         { id: 'pip', label: 'Neural Modules', status: 'pending', progress: 0 },
         { id: 'gpu', label: 'GPU Acceleration', status: 'pending', progress: 0 },
     ]);
-    const [isReady, setIsReady] = useState(false);
+    const [isReady, setIsReady] = useState(isPresentationView);
     const [query, setQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -210,7 +308,14 @@ function App() {
     const [lyricsSearchResults, setLyricsSearchResults] = useState([]);
     const [isSearchingLyrics, setIsSearchingLyrics] = useState(false);
     const [targetVideoIdForLyrics, setTargetVideoIdForLyrics] = useState(null);
+    const [presentationUrl, setPresentationUrl] = useState("");
     const [lyricsStatus, setLyricsStatus] = useState({ activeId: null, downloadedIds: [] });
+    // Auth State
+    const [loginToken, setLoginToken] = useState(null);
+    const [loginUser, setLoginUser] = useState(null);
+    const [showLoginOverlay, setShowLoginOverlay] = useState(false);
+    const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+    const [authLoading, setAuthLoading] = useState(false);
 
     const [isReinstalling, setIsReinstalling] = useState(null); // id of dependency being reinstalled
     const [gpuStatus, setGpuStatus] = useState(null); // { status, message, torchVersion, ... }
@@ -228,6 +333,43 @@ function App() {
     const searchInputRef = useRef(null);
     const pressTimerRef = useRef(null);
     const longPressTriggeredRef = useRef(false);
+
+    // Force body overflow for presentation mode
+    useEffect(() => {
+        if (isPresentationView) {
+            document.body.style.overflow = 'hidden';
+            return () => { document.body.style.overflow = 'auto'; };
+        }
+    }, [isPresentationView]);
+
+    // HTTP Server Management
+    useEffect(() => {
+        if (!isTauri) return;
+
+        const manageServer = async () => {
+            if (appConfig.appMode === 'presentation') {
+                try {
+                    const url = await invoke('start_http_server');
+                    setPresentationUrl(`${url}/?view=presentation`);
+                } catch (err) {
+                    console.error("Failed to start presentation server:", err);
+                }
+            } else {
+                try {
+                    await invoke('stop_http_server');
+                    setPresentationUrl("");
+                } catch (err) {
+                    // Ignore
+                }
+            }
+        };
+
+        manageServer();
+
+        return () => {
+            if (isTauri) invoke('stop_http_server').catch(() => { });
+        };
+    }, [appConfig.appMode]);
 
     // Inertial Smooth Scroll Loop
     useEffect(() => {
@@ -264,11 +406,18 @@ function App() {
 
         let unlisten;
         const initApp = async () => {
-            if (!isTauri) {
+            if (!isTauri || isPresentationView) {
+                console.log("Browser environment detected. Skipping native dependency check.");
                 setIsReady(true);
                 return;
             }
             try {
+                // Double check isTauri inside the async block
+                if (!window.__TAURI_INTERNALS__) {
+                    setIsReady(true);
+                    return;
+                }
+
                 // Listen for granular step updates
                 const unlistenStep = await listen('setup_step', (event) => {
                     const { id, label, status, progress } = event.payload;
@@ -319,11 +468,25 @@ function App() {
         };
     }, []);
 
+    const isJwtExpired = (token) => {
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            return payload.exp && payload.exp * 1000 < Date.now();
+        } catch { return true; }
+    };
+
     const loadConfig = async () => {
-        if (!isTauri) return;
+        if (!isTauri || isPresentationView) return;
         try {
             const config = await invoke('get_app_config');
             setAppConfig(config);
+            if (config.userToken && !isJwtExpired(config.userToken)) {
+                setLoginToken(config.userToken);
+                setLoginUser(config.username);
+            } else if (config.userToken) {
+                // Token expired, clear it
+                updateConfig({ ...config, userToken: '', username: '' });
+            }
         } catch (e) {
             console.error("Failed to load config", e);
         }
@@ -468,6 +631,43 @@ function App() {
         }
     };
 
+    const handleAuth = async (username, password) => {
+        setAuthLoading(true);
+        try {
+            const relayHost = appConfig.relayUrl || "http://localhost:3000";
+            const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+            const response = await fetch(`${relayHost}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Auth failed');
+
+            if (authMode === 'login') {
+                setLoginToken(data.token);
+                setLoginUser(data.username);
+                setShowLoginOverlay(false);
+                updateConfig({ ...appConfig, userToken: data.token, username: data.username });
+                // Auto-trigger party creation after successful login
+                setTimeout(() => handlePartyToggle(), 100);
+            } else {
+                setConfirmModal({
+                    isOpen: true,
+                    title: "Registered!",
+                    message: "Account created successfully. You can now log in.",
+                    type: 'default',
+                    onConfirm: () => setAuthMode('login')
+                });
+            }
+        } catch (e) {
+            alert("Auth Error: " + e.message);
+        } finally {
+            setAuthLoading(false);
+        }
+    };
+
     const handlePartyToggle = async () => {
         if (!isTauri) return;
 
@@ -476,25 +676,32 @@ function App() {
             setPartyUrl("");
             invoke('stop_party_mode').catch(console.error);
         } else {
-            let pName = "";
-            let token = "";
+            // Check for login first
+            if (!loginToken) {
+                setShowLoginOverlay(true);
+                return;
+            }
+
+            let partyName = "";
+            let existingPartyId = "";
+            let existingToken = "";
 
             const now = Math.floor(Date.now() / 1000);
             const isRecent = appConfig.lastPartyTimestamp && (now - appConfig.lastPartyTimestamp < 24 * 3600);
 
             if (isRecent && appConfig.lastPartyId) {
-                const choice = confirm(`You had an active party "${appConfig.lastPartyId}" in the last 24h. Do you want to continue it?\n\n(Cancel to create a new one)`);
+                const displayName = appConfig.lastPartyName || appConfig.lastPartyId;
+                const choice = confirm(`You had an active party "${displayName}" in the last 24h. Do you want to continue it?\n\n(Cancel to create a new one)`);
                 if (choice) {
-                    pName = appConfig.lastPartyId;
-                    token = appConfig.lastPartyToken;
+                    partyName = appConfig.lastPartyName || '';
+                    existingPartyId = appConfig.lastPartyId;
+                    existingToken = appConfig.lastPartyToken;
                 }
             }
 
-            if (!pName) {
-                const defaultName = Math.random().toString(36).substring(2, 6).toUpperCase();
-                pName = prompt("Enter a unique Party Name for the cloud relay:", defaultName);
-                if (!pName) return;
-                token = Math.random().toString(36).substring(2, 10);
+            if (!partyName && !existingPartyId) {
+                partyName = prompt("Enter a Party Name:", "KraoQ Party");
+                if (!partyName) return;
             }
 
             let relayHost = appConfig.relayUrl || "";
@@ -519,22 +726,27 @@ function App() {
             }
 
             try {
-                await invoke('start_party_mode', {
+                const resultStr = await invoke('start_party_mode', {
                     relayUrl: relayHost,
-                    partyName: pName,
-                    token: token
+                    jwtToken: loginToken,
+                    partyName: partyName,
+                    partyId: existingPartyId,
+                    token: existingToken
                 });
+                const partyResult = JSON.parse(resultStr);
+
                 setIsPartyMode(true);
                 // The Join URL we show the user should be the SECURE one for mobile features
-                setPartyUrl(`${secureRelayHost}/?party_id=${pName}&token=${token}`);
-                setActivePartyId(pName);
-                setActivePartyToken(token);
+                setPartyUrl(`${secureRelayHost}/?party_id=${partyResult.partyId}&token=${partyResult.token}`);
+                setActivePartyId(partyResult.partyId);
+                setActivePartyToken(partyResult.token);
 
                 // Save this party as the last one
                 const newConfig = {
                     ...appConfig,
-                    lastPartyId: pName,
-                    lastPartyToken: token,
+                    lastPartyName: partyResult.partyName,
+                    lastPartyId: partyResult.partyId,
+                    lastPartyToken: partyResult.token,
                     lastPartyTimestamp: now
                 };
                 setAppConfig(newConfig);
@@ -542,7 +754,14 @@ function App() {
 
             } catch (e) {
                 console.error("Failed to connect to relay", e);
-                alert(`Failed to start party mode: ${e}`);
+                const errMsg = String(e);
+                if (errMsg.includes('401') || errMsg.includes('403') || errMsg.includes('Authentication')) {
+                    setLoginToken(null);
+                    updateConfig({ ...appConfig, userToken: '', username: '' });
+                    setShowLoginOverlay(true);
+                } else {
+                    alert(`Failed to start party mode: ${e}`);
+                }
             }
         }
     };
@@ -621,74 +840,220 @@ function App() {
     }, [currentSong?.videoId, lyricsData, isPartyMode, activePartyId]);
 
     // Sync playback state with Party Relay
+    const syncStateRef = useRef({ currentSong, isPlaying, karaokeMode, lyricsData, audioMode });
     useEffect(() => {
-        if (!isPartyMode) return;
+        syncStateRef.current = { currentSong, isPlaying, karaokeMode, lyricsData, audioMode };
+    }, [currentSong, isPlaying, karaokeMode, lyricsData, audioMode]);
+
+    useEffect(() => {
+        if (!isPartyMode && appConfig.appMode !== 'presentation') return;
+        const isPresentation = appConfig.appMode === 'presentation';
 
         const syncState = (isFull = false) => {
+            const { currentSong: cs, isPlaying: ip, karaokeMode: km, lyricsData: ld, audioMode: am } = syncStateRef.current;
             const msg = {
                 type: 'sync_state',
                 payload: {
-                    currentSong: isFull ? currentSong : { videoId: currentSong?.videoId, title: currentSong?.title, artist: currentSong?.artist, thumbnail: currentSong?.thumbnail },
-                    isPlaying,
-                    isKaraokeMode: karaokeMode,
+                    currentSong: isFull ? cs : { videoId: cs?.videoId, title: cs?.title, artist: cs?.artist, thumbnail: cs?.thumbnail },
+                    isPlaying: ip,
+                    isKaraokeMode: km,
                     currentTime: (audioRef.current && isFinite(audioRef.current.currentTime)) ? audioRef.current.currentTime : 0,
                     duration: (audioRef.current && isFinite(audioRef.current.duration)) ? audioRef.current.duration : 0,
-                    singer: currentSong?.singer || "Host"
+                    lyricsData: isFull ? ld : undefined,
+                    audioMode: am,
+                    singer: cs?.singer || "Host",
+                    partyUrl: partyUrl || undefined
                 }
             };
 
-            if (isPartyMode) {
-                console.log(`Broadcasting ${isFull ? 'FULL' : 'LIGHT'} Sync State:`, msg.payload.currentSong?.title);
+            if (isPartyMode || appConfig.appMode === 'presentation') {
                 if (isTauri) {
-                    invoke('broadcast_ws', { payload: msg }).catch(console.error);
+                    invoke('broadcast_ws', { payload: msg, localOnly: isPresentation }).catch(console.error);
                 } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     wsRef.current.send(JSON.stringify(msg));
                 }
             }
         };
 
-        // Immediate Full Sync on state change
+        // Immediate Full Sync (always needed for initial song delivery)
         syncState(true);
 
-        // Retries for reliability
-        const t1 = setTimeout(() => syncState(true), 1000);
-        const t2 = setTimeout(() => syncState(true), 4000);
+        // One retry for reliability
+        const t1 = setTimeout(() => syncState(true), 2000);
 
-        // Periodic Light Sync (every 30 seconds)
-        const interval = setInterval(() => syncState(false), 2000);
+        // Periodic Light Sync — only when NOT in presentation mode (presentation view sends its own sync)
+        let interval;
+        if (!isPresentation) {
+            interval = setInterval(() => syncState(false), 10000);
+        }
+
         return () => {
             clearTimeout(t1);
-            clearTimeout(t2);
-            clearInterval(interval);
-        };
-    }, [currentSong, isPlaying, karaokeMode, isPartyMode, lyricsData]);
+            if (interval) clearInterval(interval);
 
-    // Listen for client joins to trigger immediate sync
-    useEffect(() => {
-        if (!isPartyMode) return;
-
-        const unlisten = listen('party_client_joined', () => {
-             console.log("[Party] Client joined notification received. Pushing fresh sync...");
-             const msg = {
+            // Send one last "stopped" update
+            const stopMsg = {
                 type: 'sync_state',
                 payload: {
-                    currentSong: currentSong,
-                    isPlaying,
-                    isKaraokeMode: karaokeMode,
-                    currentTime: (audioRef.current && isFinite(audioRef.current.currentTime)) ? audioRef.current.currentTime : 0,
-                    duration: (audioRef.current && isFinite(audioRef.current.duration)) ? audioRef.current.duration : 0,
-                    singer: currentSong?.singer || "Host"
+                    currentSong: null,
+                    isPlaying: false,
+                    isKaraokeMode: false,
+                    currentTime: 0,
+                    duration: 0,
+                    singer: ""
                 }
             };
             if (isTauri) {
-                invoke('broadcast_ws', { payload: msg }).catch(console.error);
+                invoke('broadcast_ws', { payload: stopMsg }).catch(console.error);
+            } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify(stopMsg));
+            }
+        };
+    }, [isPartyMode, appConfig.appMode]);
+
+    // Broadcast full sync when meaningful state changes
+    useEffect(() => {
+        if (!isPartyMode && appConfig.appMode !== 'presentation') return;
+
+        const isPresentation = appConfig.appMode === 'presentation';
+        const { currentSong: cs, isPlaying: ip, karaokeMode: km, lyricsData: ld, audioMode: am } = syncStateRef.current;
+        const msg = {
+            type: 'sync_state',
+            payload: {
+                currentSong: cs,
+                // In presentation mode, always send isPlaying: false to avoid conflicting
+                // with the presentation view's own playback control
+                isPlaying: isPresentation ? false : ip,
+                isKaraokeMode: km,
+                currentTime: isPresentation ? 0 : (audioRef.current && isFinite(audioRef.current.currentTime)) ? audioRef.current.currentTime : 0,
+                duration: isPresentation ? 0 : (audioRef.current && isFinite(audioRef.current.duration)) ? audioRef.current.duration : 0,
+                lyricsData: ld,
+                audioMode: am,
+                singer: cs?.singer || "Host",
+                partyUrl: partyUrl || undefined
+            }
+        };
+        if (isTauri) {
+            invoke('broadcast_ws', { payload: msg, localOnly: isPresentation }).catch(console.error);
+        } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify(msg));
+        }
+    }, [currentSong?.videoId, isPlaying, audioMode, karaokeMode, lyricsData, appConfig.appMode, partyUrl]);
+
+    // Listen for client joins to trigger immediate sync
+    useEffect(() => {
+        if (!isPartyMode && appConfig.appMode !== 'presentation') return;
+        const isPresentation = appConfig.appMode === 'presentation';
+
+        const unlisten = listen('party_client_joined', () => {
+            // CRITICAL: If we are in presentation mode, the PresentationView is the sync master.
+            // We (the Host app) are followers only. We MUST NOT broadcast state updates directly
+            // from here, but we SHOULD trigger the PresentationView to broadcast its current state.
+            if (isPresentation) {
+                console.log("[Party] Client joined. Requesting sync from Master Presentation View...");
+                emit('request_presentation_sync', {});
+                return;
+            }
+
+            console.log("[Party] Client joined notification received. Pushing fresh sync...");
+            const { currentSong: cs, isPlaying: ip, karaokeMode: km, lyricsData: ld, audioMode: am } = syncStateRef.current;
+            
+            const msg = {
+                type: 'sync_state',
+                payload: {
+                    currentSong: cs,
+                    isPlaying: ip,
+                    isKaraokeMode: km,
+                    currentTime: (audioRef.current && isFinite(audioRef.current.currentTime)) ? audioRef.current.currentTime : 0,
+                    duration: (audioRef.current && isFinite(audioRef.current.duration)) ? audioRef.current.duration : 0,
+                    lyricsData: ld,
+                    audioMode: am,
+                    singer: cs?.singer || "Host",
+                    partyUrl: partyUrl || undefined
+                }
+            };
+            if (isTauri) {
+                invoke('broadcast_ws', { payload: msg, localOnly: isPresentation }).catch(console.error);
             }
         });
 
         return () => {
             unlisten.then(f => f());
         };
-    }, [isPartyMode, currentSong, isPlaying, karaokeMode, lyricsData]);
+    }, [isPartyMode, appConfig.appMode, partyUrl]);
+
+    // Broadcast party URL to presentation screen
+    useEffect(() => {
+        if (!partyUrl) return;
+        const msg = { type: 'party_url', url: partyUrl };
+        if (isTauri) {
+            invoke('broadcast_ws', { payload: msg }).catch(console.error);
+        } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify(msg));
+        }
+    }, [partyUrl]);
+
+    // Listen for presentation screen play/pause commands
+    useEffect(() => {
+        if (appConfig.appMode !== 'presentation' || !isTauri) return;
+
+        const unlistenPlay = listen('presentation_play', () => {
+            console.log("[App] Presentation screen requested PLAY");
+            if (audioRef.current) {
+                audioRef.current.play().catch(console.error);
+            }
+        });
+
+        const unlistenPause = listen('presentation_pause', () => {
+            console.log("[App] Presentation screen requested PAUSE");
+            if (audioRef.current) {
+                audioRef.current.pause();
+            }
+        });
+
+        return () => {
+            unlistenPlay.then(f => f());
+            unlistenPause.then(f => f());
+        };
+    }, [appConfig.appMode]);
+
+    // Bridge presentation view's sync state to the party relay
+    useEffect(() => {
+        if (appConfig.appMode !== 'presentation' || !isTauri) return;
+
+        const unlisten = listen('presentation_sync_state', (event) => {
+            const payload = event.payload?.payload || event.payload;
+            if (!payload) return;
+
+            // Bridge to WebSocket if we are in a party
+            if (isPartyMode && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                const msg = {
+                    type: 'sync_state',
+                    payload: payload
+                };
+                const msgParty = {
+                    type: 'party_sync',
+                    payload: payload
+                };
+                wsRef.current.send(JSON.stringify(msg));
+                wsRef.current.send(JSON.stringify(msgParty));
+            }
+
+            // Optional: Mirror locally for the host preview
+            if (audioRef.current) {
+                if (payload.isPlaying) {
+                    if (audioRef.current.paused) audioRef.current.play().catch(() => {});
+                    if (Math.abs(audioRef.current.currentTime - payload.currentTime) > 1.5) {
+                        audioRef.current.currentTime = payload.currentTime;
+                    }
+                } else {
+                    if (!audioRef.current.paused) audioRef.current.pause();
+                }
+            }
+        });
+
+        return () => { unlisten.then(f => f()); };
+    }, [appConfig.appMode, isPartyMode]);
 
     // Sync Queue with Party Relay
     useEffect(() => {
@@ -733,6 +1098,8 @@ function App() {
                 const result = JSON.parse(res);
 
                 // Load the song into the player - either opening it fresh OR replacing the waiting screen
+                const resolvedInstrumentalUrl = await convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', ''));
+                const resolvedVocalsUrl = result.data.vocalsUrl ? await convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "";
                 const openSong = () => {
                     setLyricsData(result.data.segments);
                     setCurrentSong({
@@ -740,8 +1107,8 @@ function App() {
                         artist: nextItem.artists,
                         thumbnail: nextItem.thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                         videoId: nextItem.videoId,
-                        instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
-                        vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "",
+                        instrumentalUrl: resolvedInstrumentalUrl,
+                        vocalsUrl: resolvedVocalsUrl,
                         singer: nextItem.singer,
                         deviceId: nextItem.deviceId
                     });
@@ -807,8 +1174,8 @@ function App() {
                 artist: songItem.artists,
                 thumbnail: songItem.thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                 videoId: songItem.videoId,
-                instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
-                vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "",
+                instrumentalUrl: await convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
+                vocalsUrl: result.data.vocalsUrl ? await convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : "",
                 singer: songItem.singer,
                 deviceId: songItem.deviceId
             });
@@ -838,6 +1205,7 @@ function App() {
         if (!audio) return;
 
         const handleEnded = () => {
+            setIsPlaying(false);
             if (isPartyMode || isLockedByWeb) {
                 const nextReady = queue.find(item => item.status === 'ready');
                 if (nextReady) {
@@ -878,12 +1246,25 @@ function App() {
 
         }
 
+        if (nextSingerCount !== null) {
+            const broadcast = {
+                type: 'next_singer_countdown',
+                payload: {
+                    name: nextSingerName,
+                    count: nextSingerCount
+                }
+            };
+            if (isTauri) {
+                appInvoke('broadcast_ws', { payload: broadcast }).catch(console.error);
+            }
+        }
+
         const timer = setTimeout(() => {
             setNextSingerCount(prev => prev - 1);
         }, 1000);
 
         return () => clearTimeout(timer);
-    }, [nextSingerCount, nextSongItem, playFromQueue]);
+    }, [nextSingerCount, nextSingerName, nextSongItem, playFromQueue, appConfig.appMode]);
 
 
 
@@ -1331,8 +1712,8 @@ function App() {
                 artist: result.data.artist || "Unknown Artist",
                 thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                 videoId: videoId,
-                instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
-                vocalsUrl: result.data.vocalsUrl ? convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : ""
+                instrumentalUrl: await convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', '')),
+                vocalsUrl: result.data.vocalsUrl ? await convertFileSrc(result.data.vocalsUrl.replace('asset://localhost/', '')) : ""
             });
 
             addToRecent({
@@ -1344,6 +1725,7 @@ function App() {
             });
 
             // Update session cache (keep it in memory only)
+            const cachedInstrumentalUrl = await convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', ''));
             setSongCache(prev => ({
                 ...prev,
                 [videoId]: {
@@ -1353,7 +1735,7 @@ function App() {
                         artist: result.data.artist || "Unknown Artist",
                         thumbnail: thumbnail || "https://music.youtube.com/img/on_platform_logo_dark.svg",
                         videoId: videoId,
-                        instrumentalUrl: convertFileSrc(result.data.instrumentalUrl.replace('asset://localhost/', ''))
+                        instrumentalUrl: cachedInstrumentalUrl
                     }
                 }
             }));
@@ -1498,45 +1880,16 @@ function App() {
         const setPaused = () => setIsPlaying(false);
         audio.addEventListener('play', setPlaying);
         audio.addEventListener('pause', setPaused);
+        audio.addEventListener('ended', setPaused);
         return () => {
             audio.removeEventListener('play', setPlaying);
             audio.removeEventListener('pause', setPaused);
+            audio.removeEventListener('ended', setPaused);
         };
     }, [currentSong, karaokeMode]);
 
-    // Helper Logic for Lyrics Display
-    const currentLine = activeLineIndex !== -1 ? lyricsData[activeLineIndex] : null;
-    const prevLine = activeLineIndex > 0 ? lyricsData[activeLineIndex - 1] : null;
-    const nextLine = activeLineIndex < lyricsData.length - 1 ? lyricsData[activeLineIndex + 1] : null;
 
-    // Countdown Dot Logic
-    let displayNextText = nextLine ? nextLine.text : (lyricsData.length > 0 && activeLineIndex === -1 ? lyricsData[0].text : "");
-    let displayCurrText = currentLine ? currentLine.text : (activeLineIndex === -1 ? `Now Singing: ${currentSong ? currentSong.title + ' - ' + currentSong.artist : 'Loading...'}` : "");
-
-    if (audioRef.current && lyricsData.length > 0) {
-        const currentTime = audioRef.current.currentTime;
-        // Check Interlude
-        if (activeLineIndex !== -1 && activeLineIndex < lyricsData.length - 1) {
-            const gap = lyricsData[activeLineIndex + 1].time - lyricsData[activeLineIndex].time;
-            const timeUntilNext = lyricsData[activeLineIndex + 1].time - currentTime;
-            if (gap > 8 && timeUntilNext > 0 && timeUntilNext < 4) {
-                const dots = ". ".repeat(Math.ceil(timeUntilNext));
-                displayNextText = dots + displayNextText;
-            }
-        }
-        // Check Intro
-        if (activeLineIndex === -1) {
-            const firstTime = lyricsData[0].time;
-            const timeUntilStart = firstTime - currentTime;
-            if (timeUntilStart > 0 && timeUntilStart < 5) {
-                displayCurrText = "Get Ready...";
-                const dots = ". ".repeat(Math.ceil(timeUntilStart));
-                displayNextText = dots + displayNextText;
-            }
-        }
-    }
-
-    if (!isReady) {
+    if (!isReady && isTauri) {
         const overallProgress = Math.round(
             (setupSteps.reduce((acc, s) => acc + (s.status === 'done' ? 100 : s.progress), 0) / (setupSteps.length * 100)) * 100
         );
@@ -1618,7 +1971,7 @@ function App() {
     }
 
     return (
-        <div className={`z-10 relative transition-all duration-500 ${karaokeMode ? 'w-full min-h-screen' : 'w-full max-w-[1100px] mx-auto p-4 sm:p-8'}`}>
+        <div className={`z-10 relative transition-all duration-500 ${((karaokeMode && appConfig.appMode !== 'presentation') || isPresentationView) ? 'w-full min-h-screen' : 'w-full max-w-[1100px] mx-auto p-4 sm:p-8'}`}>
             {/* DYNAMIC ISLAND STATUS */}
             <AnimatePresence>
                 {status && (
@@ -1643,7 +1996,7 @@ function App() {
                 )}
             </AnimatePresence>
             {/* HEADER AREA */}
-            {!karaokeMode && (
+            {(!karaokeMode || appConfig.appMode === 'presentation') && !isPresentationView && (
                 <header className={`p-6 mb-8 flex justify-between items-center transition-all duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : 'opacity-100'}`}>
                     <div className="flex flex-col gap-1">
                         <h1 className="text-4xl font-black tracking-tighter text-white flex items-center gap-2">
@@ -1653,6 +2006,68 @@ function App() {
                     </div>
 
                     <div className="flex items-center gap-3">
+                        {appConfig.appMode === 'presentation' && (
+                            <div className="flex flex-col items-end mr-4 animate-in fade-in slide-in-from-right-4 duration-500">
+                                <span className="text-[10px] font-black text-primary uppercase tracking-widest mb-1 opacity-80">Presentation View</span>
+                                <div className="flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-xl backdrop-blur-md">
+                                    <span className="text-[11px] font-mono text-white/90 selection:bg-primary/30">
+                                        {presentationUrl || 'Starting...'}
+                                    </span>
+                                    <button
+                                        onClick={() => {
+                                            if (presentationUrl) {
+                                                navigator.clipboard.writeText(presentationUrl);
+                                                setStatus("URL Copied!");
+                                                setTimeout(() => setStatus(""), 2000);
+                                            }
+                                        }}
+                                        className="text-white/40 hover:text-white transition-colors"
+                                        title="Copy URL"
+                                    >
+                                        <Download size={12} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* MINI PLAYER CONTROLLER (Visible when song is playing in Presentation Mode) */}
+                        {karaokeMode && currentSong && appConfig.appMode === 'presentation' && (
+                            <div className="flex items-center gap-3 bg-white/5 border border-white/10 px-4 py-2 rounded-2xl backdrop-blur-md animate-in zoom-in-95 duration-500 mr-2">
+                                <div className="flex flex-col">
+                                    <span className="text-[9px] font-black text-primary uppercase tracking-[0.2em] mb-0.5">Now Playing</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-white text-[11px] font-bold truncate max-w-[150px]">{currentSong.title}</span>
+                                        <span className="text-white/40 text-[9px] font-medium">- {currentSong.singer || "Host"}</span>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-1 ml-2">
+                                    <button
+                                        onClick={() => {
+                                            if (audioRef.current) {
+                                                if (isPlaying) {
+                                                    audioRef.current.pause();
+                                                } else {
+                                                    audioRef.current.play();
+                                                }
+                                                setIsPlaying(!isPlaying);
+                                            }
+                                        }}
+                                        className="p-2 hover:bg-white/10 text-white transition-colors rounded-lg"
+                                        title={isPlaying ? "Pause" : "Play"}
+                                    >
+                                        {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+                                    </button>
+                                    <button
+                                        onClick={() => setKaraokeMode(false)}
+                                        className="p-2 hover:bg-red-500/20 text-red-400 transition-colors rounded-lg"
+                                        title="Stop Session"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
                         <motion.button
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}
@@ -1678,8 +2093,8 @@ function App() {
                 </header>
             )}
 
-            {/* Aurora Colors during Transition only */}
-            {isTransitioning && !karaokeMode && (
+            {/* Aurora Colors during Transition or Presentation Standby */}
+            {(isTransitioning || (isPresentationView && !karaokeMode)) && (
                 <div className="fixed inset-0 z-0 opacity-40 transition-opacity duration-1000">
                     <AuroraBackground audioRef={audioRef} />
                 </div>
@@ -1768,7 +2183,7 @@ function App() {
             {/* AUTH HEADER removed for local single-user */}
 
             {/* HEADER */}
-            {!karaokeMode && (
+            {(!karaokeMode || appConfig.appMode === 'presentation') && !isPresentationView && (
                 <div
                     ref={headerRef}
                     style={transitionStage === 'hero' || transitionStage === 'fadeout' ? {
@@ -1799,7 +2214,7 @@ function App() {
             )}
 
             {/* SEARCH SECTION */}
-            {!karaokeMode && (
+            {(!karaokeMode || appConfig.appMode === 'presentation') && !isPresentationView && (
                 <div className={`relative z-50 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150`}>
                     <div className={`bg-card-bg/50 backdrop-blur-xl p-4 sm:p-8 rounded-[2rem] border border-white/10 shadow-2xl relative transition-colors duration-300 ${isTransitioning ? 'pointer-events-none' : ''}`}>
                         {/* Search Input */}
@@ -2004,7 +2419,7 @@ function App() {
             )}
 
             {/* RECENT SONGS */}
-            {!karaokeMode && recentSongs.length > 0 && searchResults.length === 0 && (
+            {(!karaokeMode || appConfig.appMode === 'presentation') && !isPresentationView && recentSongs.length > 0 && searchResults.length === 0 && (
                 <div className={`mt-16 w-screen max-w-[1100px] relative left-1/2 -translate-x-1/2 recent-list-container transition-[transform,opacity] duration-1000 ${isTransitioning ? 'animate-none' : 'opacity-100 scale-100 animate-in fade-in duration-700 delay-300'}`}>
                     <h3 className={`text-text-muted text-sm font-bold uppercase tracking-widest mb-6 px-4 transition-opacity duration-1000 ${isTransitioning ? 'blur-2xl opacity-0' : ''}`}>Recently Sung</h3>
 
@@ -2111,300 +2526,37 @@ function App() {
                 )}
             </AnimatePresence>
 
-            {/* CONFIRMATION MODAL */}
-            <AnimatePresence>
-                {confirmModal.isOpen && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
-                        onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
-                    >
-                        <motion.div
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.9, opacity: 0 }}
-                            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                            className="bg-slate-900 border border-white/10 rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 overflow-hidden"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-xl ${confirmModal.type === 'danger' ? 'bg-red-500/20 text-red-400' : 'bg-primary/20 text-primary'}`}>
-                                    {confirmModal.type === 'danger' ? <AlertCircle size={24} /> : <CheckCircle2 size={24} />}
-                                </div>
-                                <h3 className="text-xl font-black text-white">{confirmModal.title || 'Confirm Action'}</h3>
-                            </div>
-                            <p className="text-white/60 text-sm">{confirmModal.message}</p>
-                            <div className="flex justify-end gap-3 mt-4">
-                                <button
-                                    onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
-                                    className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white text-sm font-medium transition-all"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        if (confirmModal.onConfirm) confirmModal.onConfirm();
-                                        setConfirmModal({ ...confirmModal, isOpen: false });
-                                    }}
-                                    className={`px-4 py-2 rounded-xl text-sm font-black transition-all ${confirmModal.type === 'danger'
-                                        ? 'bg-red-500 hover:bg-red-600 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]'
-                                        : 'bg-primary hover:bg-primary-hover text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]'
-                                        }`}
-                                >
-                                    {confirmModal.confirmText || 'Confirm'}
-                                </button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {/* CONFIRMATION MODAL is now handled by the ConfirmModal component call at the bottom of the App return */}
 
             {/* KARAOKE PLAYER VIEW */}
-            {karaokeMode && currentSong && (
-                <div
-                    ref={karaokeContainerRef}
-                    className={`
-                        animate-in fade-in duration-500
-                        bg-black overflow-hidden fixed inset-0 z-50 flex flex-col items-center justify-center
-                    `}
-                    style={{ touchAction: 'none' }}
-                    onClick={() => setShowControls(prev => !prev)}
-                    onDoubleClick={!isMobile() ? toggleFullscreen : undefined}
-                >
-                    <div
-                        className={`
-                         relative bg-black overflow-hidden flex-1 w-full h-full flex flex-col items-center justify-center transition-opacity duration-300
-                     `}
-                        style={{ touchAction: 'none' }}
-                    >
-                        <AuroraBackground audioRef={audioRef} />
-
-                        {/* NEXT SINGER COUNTDOWN OVERLAY */}
-                        {nextSingerCount !== null && (
-                            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 backdrop-blur-3xl animate-in fade-in duration-300">
-                                <p className="text-primary text-sm font-black tracking-[0.2em] uppercase mb-2">Next Singer</p>
-                                <h2 className="text-5xl font-black text-white mb-8 drop-shadow-[0_0_15px_rgba(99,102,241,0.5)]">{nextSingerName}</h2>
-
-                                <div className="flex items-center justify-center w-24 h-24 rounded-full border-4 border-white/10 text-4xl font-black text-white relative bg-white/5">
-                                    <div className="absolute -inset-1 rounded-full border-4 border-primary border-t-transparent border-r-transparent animate-spin" />
-                                    {nextSingerCount}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* WAITING FOR NEXT QUEUE OVERLAY */}
-                        {isWaitingForNextQueue && (
-                            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 backdrop-blur-3xl animate-in fade-in duration-300">
-                                <div className="p-8 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-xl flex flex-col items-center justify-center shadow-2xl">
-                                    <div className="p-4 rounded-2xl bg-primary/20 text-primary mb-4">
-                                        <Loader2 size={36} className="animate-spin" />
-                                    </div>
-                                    <h3 className="text-2xl font-black text-white mb-2">Setting Up Your Stage</h3>
-                                    <p className="text-white/60 text-sm max-w-[280px] text-center mb-6">Hang tight while the next track finishes downloading…</p>
-                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-[11px] font-bold text-emerald-400">
-                                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                        Processing Background Queue
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-
-
-                        {/* Play/Pause Overlay */}
-                        <div className={`
-                            absolute inset-0 z-20 flex items-center justify-center transition-opacity duration-300
-                            ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
-                        `}>
-                            {isPartyMode && !isPlaying && currentSong?.singer && (
-                                <div className="absolute top-[18%] left-1/2 -translate-x-1/2 text-center animate-in slide-in-from-top-4 duration-500 w-full max-w-[90vw]">
-                                    <p className="text-primary-hover text-sm sm:text-lg font-black tracking-[0.3em] uppercase mb-4 drop-shadow-sm opacity-80">Time to Shine</p>
-                                    <h2 className="text-5xl sm:text-8xl font-black text-white drop-shadow-[0_0_25px_rgba(99,102,241,0.6)] tracking-tight truncate px-4">
-                                        {currentSong.singer}
-                                    </h2>
-                                    <div className="mt-8 flex flex-col items-center gap-2 animate-in fade-in slide-in-from-bottom-4 duration-1000 delay-300">
-                                        <div className="h-[1px] w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent mb-4" />
-                                        <p className="text-white/80 text-xl sm:text-4xl font-extrabold tracking-wide drop-shadow-xl max-w-4xl px-6 leading-tight">
-                                            {currentSong.title}
-                                        </p>
-                                        {currentSong.artist && (
-                                            <p className="text-white/40 text-sm sm:text-xl font-medium tracking-widest uppercase mt-2">
-                                                {currentSong.artist}
-                                            </p>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div
-                                onClick={(e) => {
-
-                                    e.stopPropagation();
-                                    if (audioRef.current.paused) {
-                                        audioRef.current.play();
-                                        setShowControls(false);
-                                    } else {
-                                        audioRef.current.pause();
-                                    }
-
-                                }}
-                                className="w-24 h-24 flex items-center justify-center bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white shadow-2xl transform active:scale-90 transition-[background-color,transform] cursor-pointer hover:bg-white/20"
-                            >
-                                {isPlaying ? <Pause size={48} fill="currentColor" /> : <Play size={48} fill="currentColor" className="ml-2" />}
-                            </div>
-                        </div>
-
-                        <div
-                            className={`text-center w-full z-10 relative overflow-hidden transition-all duration-300 will-change-[transform,opacity] ${showControls ? (!isMobile() ? 'blur-sm opacity-50 scale-95' : 'opacity-40') : 'blur-0 opacity-100 scale-100'}`}
-                            style={{
-                                height: '80vh',
-                                maskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)',
-                                WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)'
-                            }}
-                        >
-                            <div
-                                className="absolute inset-x-12 transition-transform duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] will-change-transform"
-                                style={{
-                                    transform: `translateY(${- (activeLineIndex + 1) * 220}px)`,
-                                    top: '50%',
-                                    marginTop: '-110px'
-                                }}
-                            >
-                                {/* Initial / Intro Line */}
-                                <div className={`flex items-center justify-center transition-all duration-500 h-[220px] ${activeLineIndex === -1 ? 'scale-110 opacity-100' : 'scale-90 opacity-40'}`}>
-                                    <span
-                                        className={`${activeLineIndex === -1 ? 'bg-clip-text text-transparent bg-gradient-to-r from-red-500 via-yellow-400 via-green-400 via-cyan-400 via-blue-500 to-purple-500 drop-shadow-[0_0_20px_rgba(99,102,241,0.4)]' : 'text-white'} font-bold leading-tight`}
-                                        style={{ fontSize: 'clamp(1.2rem, 6vw, 3.5rem)' }}
-                                    >
-                                        {activeLineIndex === -1 ? displayCurrText : ""}
-                                    </span>
-                                </div>
-
-                                {lyricsData.map((line, idx) => {
-                                    const prevLine = idx > 0 ? lyricsData[idx - 1] : null;
-                                    let wordGap = 0;
-                                    const currStart = line.words && line.words.length > 0 ? line.words[0].start : (line.time || 0);
-                                    const prevEnd = prevLine && prevLine.words && prevLine.words.length > 0 ? prevLine.words[prevLine.words.length - 1].end : (prevLine ? prevLine.time : 0);
-                                    if (prevLine) {
-                                        wordGap = currStart - prevEnd;
-                                    } else {
-                                        wordGap = currStart; // For the very first line, gap is the intro break length
-                                    }
-
-                                    return (
-                                        <div
-                                            key={idx}
-                                            className={`flex items-center justify-center transition-all duration-500 h-[220px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
-                                        >
-                                            <span
-                                                className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? '' : 'text-white'}`}
-                                                style={{
-                                                    fontSize: 'clamp(1.2rem, 6vw, 3.5rem)',
-                                                    textShadow: idx === activeLineIndex ? '0 0 15px rgba(99,102,241,0.5)' : 'none',
-                                                }}
-                                            >
-                                                <LyricLine
-                                                    line={line}
-                                                    isActive={idx === activeLineIndex}
-                                                    isPassed={idx < activeLineIndex}
-                                                    audioRef={audioRef}
-                                                    displayNextText={displayNextText}
-                                                    gap={wordGap}
-                                                    config={appConfig}
-                                                    isFirst={idx === 0}
-                                                    isNext={idx === activeLineIndex + 1}
-                                                />
-                                            </span>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Controls Container - Optimized with Transform */}
-                    <div
-                        className={`w-full absolute bottom-0 left-0 right-0 z-40 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] px-4 sm:px-20 py-3 bg-black border-t border-white/5 will-change-transform ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}`}
-                        style={{ paddingBottom: isMobile() ? 'calc(1.5rem + env(safe-area-inset-bottom))' : '1.5rem' }}
-                        onClick={(e) => e.stopPropagation()} // Prevent closing when clicking controls
-                    >
-                        <div className={`grid ${!isMobile() ? 'grid-cols-[1fr,auto]' : 'grid-cols-1'} gap-x-0 items-center`}>
-                            <audio
-                                ref={audioRef}
-                                src={currentSong ? (typeof audioMode !== 'undefined' && audioMode === 'vocals' && currentSong.vocalsUrl ? currentSong.vocalsUrl : currentSong.instrumentalUrl) : ""}
-                                crossOrigin="anonymous"
-                                controls
-                                controlsList="nodownload noplaybackrate"
-                                autoPlay={!isAutoPaused}
-                                className="w-full h-10 rounded-xl invert hue-rotate-180 brightness-150 custom-audio-controls"
-
-                            />
-                            {!isMobile() && (
-                                <button
-                                    onClick={toggleFullscreen}
-                                    className="h-10 flex items-center pr-6 text-white/50 hover:text-white transform active:scale-90 transition-all cursor-pointer"
-                                    title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-                                >
-                                    {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                                </button>
-                            )}
-
-                            <div
-                                className="mt-1 text-text-muted text-[10px] uppercase tracking-widest font-bold px-2 col-span-2 hover:opacity-100 opacity-60 cursor-pointer flex items-center gap-1 transition-all"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (currentSong && currentSong.vocalsUrl) {
-                                        const currentPos = audioRef.current ? audioRef.current.currentTime : 0;
-                                        const wasPaused = audioRef.current ? audioRef.current.paused : true;
-                                        setAudioMode(prev => prev === 'instrumental' ? 'vocals' : 'instrumental');
-                                        setTimeout(() => {
-                                            if (audioRef.current) {
-                                                audioRef.current.currentTime = currentPos;
-                                                if (!wasPaused) {
-                                                    audioRef.current.play().catch(console.error);
-                                                }
-                                            }
-                                        }, 100);
-                                    }
-                                }}
-                            >
-                                Mode: <span className={typeof audioMode !== 'undefined' && audioMode === 'vocals' ? 'text-primary-hover font-black' : 'text-accent'}>{typeof audioMode !== 'undefined' && audioMode === 'vocals' ? 'Vocal (Original)' : 'Instrumental'}</span>
-                                {currentSong && currentSong.vocalsUrl && <span className="text-[8px] text-white/30 ml-2">(Click to Swap)</span>}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Back Button */}
-                    {showControls && (
-                        <>
-                            <button
-                                className="absolute top-10 left-6 z-[100] bg-black/50 backdrop-blur-md p-3 rounded-full text-white/80 hover:text-white transition-all active:scale-90 border border-white/10 shadow-2xl"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    openLyricsSearch(currentSong.video_id || currentSong.videoId, `${currentSong.artist} ${currentSong.title}`);
-                                }}
-                                title="Alternative Lyrics"
-                            >
-                                <Music size={24} strokeWidth={2.5} />
-                            </button>
-
-                            <button
-                                className="absolute top-10 right-6 z-[100] bg-black/50 backdrop-blur-md p-3 rounded-full text-white/80 hover:text-white transition-all active:scale-90 border border-white/10 shadow-2xl"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    audioRef.current?.pause();
-                                    setKaraokeMode(false);
-                                }}
-                                title="Close Player"
-                            >
-                                <X size={24} strokeWidth={3} />
-                            </button>
-                        </>
-                    )}
-                </div>
+            {(karaokeMode && currentSong) && (
+                <KaraokePlayer
+                    currentSong={currentSong}
+                    lyricsData={lyricsData}
+                    activeLineIndex={activeLineIndex}
+                    isPlaying={isPlaying}
+                    showControls={showControls}
+                    setShowControls={setShowControls}
+                    nextSingerName={nextSingerName}
+                    nextSingerCount={nextSingerCount}
+                    isWaitingForNextQueue={isWaitingForNextQueue}
+                    isPresentationView={false}
+                    headless={appConfig.appMode === 'presentation'}
+                    karaokeContainerRef={karaokeContainerRef}
+                    audioRef={audioRef}
+                    toggleFullscreen={toggleFullscreen}
+                    isFullscreen={isFullscreen}
+                    setKaraokeMode={setKaraokeMode}
+                    appConfig={appConfig}
+                    isPartyMode={isPartyMode}
+                    audioMode={audioMode}
+                    setAudioMode={setAudioMode}
+                    isAutoPaused={isAutoPaused}
+                    isMobile={isMobile}
+                    onOpenLyricsSearch={() => openLyricsSearch(currentSong.video_id || currentSong.videoId, `${currentSong.artist} ${currentSong.title}`)}
+                />
             )}
+
             {/* SETTINGS OVERLAY */}
             <AnimatePresence>
                 {showSettings && (
@@ -2437,26 +2589,57 @@ function App() {
                             <div className="flex-1 overflow-y-auto stylized-scrollbar p-8 space-y-10">
                                 {/* PERFORMANCE SECTION */}
                                 <section className="space-y-4">
-                                    {isTauri && <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em]">Performance</h3>}
-                                    {isTauri && (
-                                        <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
-                                            <div className="flex items-center gap-4">
-                                                <div className={`p-2.5 rounded-xl ${appConfig.gpuEnabled ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/20'}`}>
-                                                    <Zap size={20} fill={appConfig.gpuEnabled ? 'currentColor' : 'none'} />
-                                                </div>
-                                                <div>
-                                                    <p className="text-white font-bold text-sm">GPU Acceleration</p>
-                                                    <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">Uses NVIDIA CUDA to speed up vocal separation significantly.</p>
-                                                </div>
+                                    {/* APP MODE SECTION */}
+                                    <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Application Mode</h3>
+                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400`}>
+                                                <Monitor size={20} />
                                             </div>
+                                            <div>
+                                                <p className="text-white font-bold text-sm">App mode</p>
+                                                <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">Standalone includes the player screen. Presentation offloads it to a remote display.</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-1 bg-black/40 p-0.5 rounded-lg border border-white/5 h-8">
                                             <button
-                                                onClick={() => updateConfig({ ...appConfig, gpuEnabled: !appConfig.gpuEnabled })}
-                                                className={`w-12 h-6 rounded-full transition-all relative ${appConfig.gpuEnabled ? 'bg-primary' : 'bg-white/10'}`}
+                                                onClick={() => updateConfig({ ...appConfig, appMode: 'standalone' })}
+                                                className={`px-2 rounded-md text-[10px] font-bold transition-all ${appConfig.appMode !== 'presentation' ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
                                             >
-                                                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
+                                                Standalone
+                                            </button>
+                                            <button
+                                                onClick={() => updateConfig({ ...appConfig, appMode: 'presentation' })}
+                                                className={`px-2 rounded-md text-[10px] font-bold transition-all ${appConfig.appMode === 'presentation' ? 'bg-indigo-500 text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
+                                            >
+                                                Presentation
                                             </button>
                                         </div>
-                                    )}
+                                    </div>
+
+                                    {/* ENVIRONMENT SECTION */}
+                                    <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Environment</h3>
+                                    <div className="space-y-3">
+                                        {isTauri && (
+                                            <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                                                <div className="flex items-center gap-4">
+                                                    <div className={`p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400`}>
+                                                        <Cpu size={20} />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-white font-bold text-sm">GPU Acceleration</p>
+                                                        <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">Uses NVIDIA CUDA to speed up vocal separation significantly.</p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => updateConfig({ ...appConfig, gpuEnabled: !appConfig.gpuEnabled })}
+                                                    className={`w-12 h-6 rounded-full transition-all relative ${appConfig.gpuEnabled ? 'bg-primary' : 'bg-white/10'}`}
+                                                >
+                                                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
 
                                     {/* KARAOKE SECTION */}
                                     <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Karaoke</h3>
@@ -2903,8 +3086,161 @@ function App() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* AUTH OVERLAY */}
+            <AnimatePresence>
+                {showLoginOverlay && (
+                    <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl p-8"
+                    >
+                        <motion.div 
+                            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            className="w-full max-w-sm bg-zinc-900/50 border border-white/10 p-8 rounded-3xl shadow-2xl relative overflow-hidden"
+                        >
+                             {/* Decorative glow */}
+                            <div className="absolute -top-24 -left-24 w-48 h-48 bg-purple-500/20 rounded-full blur-[80px]" />
+                            <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-blue-500/20 rounded-full blur-[80px]" />
+
+                            <button 
+                                onClick={() => setShowLoginOverlay(false)}
+                                className="absolute top-4 right-4 p-2 text-white/30 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                            >
+                                <X size={20} />
+                            </button>
+
+                            <div className="text-center space-y-2 mb-8 relative">
+                                <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-purple-500/20">
+                                    <Zap className="text-white" size={32} />
+                                </div>
+                                <h2 className="text-2xl font-bold text-white tracking-tight">
+                                    {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+                                </h2>
+                                <p className="text-white/50 text-sm">
+                                    {authMode === 'login' 
+                                        ? 'Sign in to your KraoQ account to host parties' 
+                                        : 'Join the party and start hosting your own events'}
+                                </p>
+                            </div>
+
+                            <form className="space-y-4 relative" onSubmit={(e) => {
+                                e.preventDefault();
+                                handleAuth(e.target.username.value, e.target.password.value);
+                            }}>
+                                <div className="space-y-1">
+                                    <label className="text-xs font-medium text-white/40 uppercase tracking-widest ml-1">Username</label>
+                                    <input 
+                                        name="username"
+                                        type="text"
+                                        required
+                                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-purple-500/40 transition-all font-medium"
+                                        placeholder="Enter your username"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs font-medium text-white/40 uppercase tracking-widest ml-1">Password</label>
+                                    <input 
+                                        name="password"
+                                        type="password"
+                                        required
+                                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-purple-500/40 transition-all font-medium"
+                                        placeholder="••••••••"
+                                    />
+                                </div>
+
+                                <motion.button
+                                    whileHover={{ scale: 1.02 }}
+                                    whileTap={{ scale: 0.98 }}
+                                    type="submit"
+                                    disabled={authLoading}
+                                    className="w-full bg-white text-black font-bold py-3.5 rounded-xl mt-4 flex items-center justify-center space-x-2 disabled:opacity-50 shadow-xl shadow-white/5"
+                                >
+                                    {authLoading ? (
+                                        <Loader2 className="animate-spin" size={20} />
+                                    ) : (
+                                        <>
+                                            <span>{authMode === 'login' ? 'Sign In' : 'Create Account'}</span>
+                                            <ArrowRight size={18} />
+                                        </>
+                                    )}
+                                </motion.button>
+
+                                <div className="pt-4 text-center">
+                                    <button 
+                                        type="button"
+                                        onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+                                        className="text-sm text-white/40 hover:text-white transition-colors"
+                                    >
+                                        {authMode === 'login' 
+                                            ? "Don't have an account? Create one" 
+                                            : "Already have an account? Sign in"}
+                                    </button>
+                                </div>
+                            </form>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            <ConfirmModal modal={confirmModal} setModal={setConfirmModal} />
         </div>
 
+    );
+}
+
+function ConfirmModal({ modal, setModal }) {
+    return (
+        <AnimatePresence>
+            {modal.isOpen && (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+                    onClick={() => setModal({ ...modal, isOpen: false })}
+                >
+                    <motion.div
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.9, opacity: 0 }}
+                        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                        className="bg-slate-900 border border-white/10 rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-xl ${modal.type === 'danger' ? 'bg-red-500/20 text-red-400' : 'bg-primary/20 text-primary'}`}>
+                                {modal.type === 'danger' ? <AlertCircle size={24} /> : <CheckCircle2 size={24} />}
+                            </div>
+                            <h3 className="text-xl font-black text-white">{modal.title || 'Confirm Action'}</h3>
+                        </div>
+                        <p className="text-white/60 text-sm">{modal.message}</p>
+                        <div className="flex justify-end gap-3 mt-4">
+                            <button
+                                onClick={() => setModal({ ...modal, isOpen: false })}
+                                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white text-sm font-medium transition-all"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (modal.onConfirm) modal.onConfirm();
+                                    setModal({ ...modal, isOpen: false });
+                                }}
+                                className={`px-4 py-2 rounded-xl text-sm font-black transition-all ${modal.type === 'danger'
+                                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]'
+                                    : 'bg-primary hover:bg-primary-hover text-white shadow-[0_0_15px_rgba(99,102,241,0.3)]'
+                                    }`}
+                            >
+                                {modal.confirmText || 'Confirm'}
+                            </button>
+                        </div>
+                    </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
     );
 }
 
@@ -2927,127 +3263,5 @@ function parseLRC(lrcText) {
     return lyricsData;
 }
 
-function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, config, isFirst, isPassed }) {
-    const wordRefs = React.useRef([]);
-    const containerRef = React.useRef(null);
-    const progressBarRef = React.useRef(null);
-
-    React.useEffect(() => {
-        if (!isActive && !isNext) return;
-
-        let rafId;
-        const tick = () => {
-            const currentTime = audioRef.current ? audioRef.current.currentTime : 0;
-
-            const isFutureActive = isActive && line.words && line.words.length > 0 && currentTime < line.words[0].start;
-
-            const showForThisGap = config?.prepareIndicatorMode === 'all' ? gap > 1.0 : gap > 5.0;
-            const forceFirst = isFirst && gap > 1.0;
-
-            if ((isNext || isFutureActive) && (showForThisGap || forceFirst)) {
-                const start = line.words && line.words.length > 0 ? line.words[0].start : (line.time || 0);
-                const timeUntilNext = start - currentTime;
-                if (timeUntilNext > 0 && timeUntilNext < gap) {
-                    if (containerRef.current) containerRef.current.style.display = 'block';
-                    if (progressBarRef.current) {
-                        const pct = Math.max(0, Math.min(100, (timeUntilNext / gap) * 100));
-                        progressBarRef.current.style.width = `${pct}%`;
-                    }
-                } else {
-                    if (containerRef.current) containerRef.current.style.display = 'none';
-                }
-            }
-
-            if (isActive && line.words) {
-                line.words.forEach((w, i) => {
-                    const el = wordRefs.current[i];
-                    if (!el) return;
-
-                    if (currentTime >= w.start && currentTime <= w.end) {
-                        // Active word (progressive filling)
-                        const duration = w.end - w.start;
-                        const elapsed = currentTime - w.start;
-                        const progress = Math.max(0, Math.min(100, (elapsed / duration) * 100));
-
-                        el.style.backgroundImage = `linear-gradient(to right, #ffffff ${progress}%, rgba(255, 255, 255, 0.4) ${progress}%)`;
-                        el.style.webkitBackgroundClip = 'text';
-                        el.style.webkitTextFillColor = 'transparent';
-                        el.style.transform = 'scale(1.05)';
-                        el.style.textShadow = '0 0 10px rgba(99, 102, 241, 0.4)';
-                    } else if (currentTime > w.end) {
-                        // Passed word
-                        el.style.backgroundImage = 'none';
-                        el.style.webkitBackgroundClip = 'unset';
-                        el.style.webkitTextFillColor = '#a5b4fc';
-                        el.style.color = '#a5b4fc';
-                        el.style.transform = 'scale(1.0)';
-                        el.style.textShadow = 'none';
-                    } else {
-                        // Future word
-                        el.style.backgroundImage = 'none';
-                        el.style.webkitBackgroundClip = 'unset';
-                        el.style.webkitTextFillColor = 'rgba(255, 255, 255, 0.4)';
-                        el.style.color = 'rgba(255, 255, 255, 0.4)';
-                        el.style.transform = 'scale(1.0)';
-                        el.style.textShadow = 'none';
-                    }
-                });
-            }
-
-            rafId = requestAnimationFrame(tick);
-        };
-
-        rafId = requestAnimationFrame(tick);
-        return () => cancelAnimationFrame(rafId);
-    }, [isActive, isNext, gap, line.words, config, isFirst]);
-
-    // if (isNext && displayNextText.includes('.')) {
-    //     return displayNextText;
-    // }
-
-    if (!line.words || line.words.length === 0) {
-        return line.text;
-    }
-
-    return (
-        <div className="flex flex-col items-center justify-center">
-            {(isNext || isActive) && typeof gap !== 'undefined' && ((config?.prepareIndicatorMode === 'all' ? gap > 1 : gap > 5) || (isFirst && gap > 1)) && (
-                <div
-                    ref={containerRef}
-                    className="w-44 h-1 bg-white/10 rounded-full mb-4 overflow-hidden"
-                    style={{ display: 'none' }}
-                >
-                    <div
-                        ref={progressBarRef}
-                        className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 rounded-full transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(99,102,241,0.6)]"
-                        style={{ width: '100%' }}
-                    />
-                </div>
-            )}
-            <span className="flex flex-wrap items-center justify-center">
-                {line.words.map((w, i) => (
-                    <span
-                        key={i}
-                        ref={el => wordRefs.current[i] = el}
-                        className="transition-all duration-100 ease-out"
-                        style={{
-                            margin: '0 5px',
-                            display: 'inline-block',
-                            color: isPassed ? '#a5b4fc' : 'rgba(255,255,255,0.4)',
-                            backgroundImage: !isActive ? 'none' : undefined,
-                            webkitBackgroundClip: !isActive ? 'unset' : undefined,
-                            webkitTextFillColor: !isActive ? (isPassed ? '#a5b4fc' : 'rgba(255,255,255,0.4)') : undefined,
-                            transform: !isActive ? 'scale(1.0)' : undefined,
-                            textShadow: !isActive ? 'none' : undefined
-                        }}
-                    >
-                        {w.word}
-                    </span>
-                ))}
-            </span>
-        </div>
-
-    );
-}
 
 export default App;

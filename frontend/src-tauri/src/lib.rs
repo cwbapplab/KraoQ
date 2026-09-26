@@ -27,6 +27,8 @@ pub struct AppState {
     pub active_processes: Arc<AsyncMutex<HashMap<String, oneshot::Sender<()>>>>,
     pub party_port: Mutex<Option<u16>>,
     pub party_queue: Mutex<Vec<server::QueueRequest>>,
+    pub local_server_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    pub local_ws_clients: Arc<AsyncMutex<Vec<tokio::sync::mpsc::Sender<tokio_tungstenite::tungstenite::Message>>>>,
 }
 
 
@@ -55,10 +57,17 @@ pub struct AppConfig {
     pub last_party_token: String,
     #[serde(default)]
     pub last_party_timestamp: i64,
+    #[serde(default = "default_app_mode")]
+    pub app_mode: String, // "standalone" or "presentation"
+    #[serde(default)]
+    pub user_token: String,
+    #[serde(default)]
+    pub username: String,
 }
 
 fn default_instrumental_preset() -> String { "karaoke".to_string() }
 fn default_vocal_preset() -> String { "vocal_clean".to_string() }
+fn default_app_mode() -> String { "standalone".to_string() }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -76,6 +85,9 @@ impl Default for AppConfig {
             last_party_id: "".to_string(),
             last_party_token: "".to_string(),
             last_party_timestamp: 0,
+            app_mode: default_app_mode(),
+            user_token: "".to_string(),
+            username: "".to_string(),
         }
     }
 }
@@ -99,6 +111,10 @@ pub fn get_config_internal(app: &AppHandle) -> AppConfig {
 
 #[tauri::command]
 fn set_config(config: AppConfig, app: AppHandle) -> Result<(), String> {
+    set_config_internal(config, app)
+}
+
+pub(crate) fn set_config_internal(config: AppConfig, app: AppHandle) -> Result<(), String> {
     let path = get_config_path(&app);
     let content = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())?;
@@ -107,6 +123,10 @@ fn set_config(config: AppConfig, app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn get_app_config(app: AppHandle) -> AppConfig {
+    get_app_config_internal(app)
+}
+
+pub(crate) fn get_app_config_internal(app: AppHandle) -> AppConfig {
     get_config_internal(&app)
 }
 
@@ -124,6 +144,10 @@ pub struct GpuStatus {
 
 #[tauri::command]
 async fn check_gpu_status(app: AppHandle) -> Result<GpuStatus, String> {
+    check_gpu_status_internal(app).await
+}
+
+pub(crate) async fn check_gpu_status_internal(app: AppHandle) -> Result<GpuStatus, String> {
     let python_exe = get_python_exe(&app);
     let script = r#"
 import json, sys
@@ -233,6 +257,10 @@ pub(crate) fn get_python_script_path(app: &AppHandle, script_name: &str) -> Path
 
 #[tauri::command]
 async fn search(query: String, app: AppHandle) -> Result<String, String> {
+    search_internal(query, app).await
+}
+
+pub(crate) async fn search_internal(query: String, app: AppHandle) -> Result<String, String> {
     let config = crate::get_config_internal(&app);
     let state: tauri::State<crate::AppState> = app.state();
     
@@ -266,6 +294,10 @@ async fn search(query: String, app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 async fn suggestions(query: String, app: AppHandle) -> Result<String, String> {
+    suggestions_internal(query, app).await
+}
+
+pub(crate) async fn suggestions_internal(query: String, app: AppHandle) -> Result<String, String> {
     let config = crate::get_config_internal(&app);
     let state: tauri::State<crate::AppState> = app.state();
     
@@ -395,6 +427,10 @@ struct ProcessStatus {
 
 #[tauri::command]
 async fn cancel_processing(video_id: String, app: AppHandle) -> Result<(), String> {
+    cancel_processing_internal(video_id, app).await
+}
+
+pub(crate) async fn cancel_processing_internal(video_id: String, app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut active_procs = state.active_processes.lock().await;
     if let Some(sender) = active_procs.remove(&video_id) {
@@ -407,6 +443,10 @@ async fn cancel_processing(video_id: String, app: AppHandle) -> Result<(), Strin
 
 #[tauri::command]
 async fn process_yt(video_id: String, app: AppHandle) -> Result<String, String> {
+    process_yt_internal(video_id, app).await
+}
+
+pub(crate) async fn process_yt_internal(video_id: String, app: AppHandle) -> Result<String, String> {
     let (tx, mut rx) = oneshot::channel::<()>();
     {
         let state = app.state::<AppState>();
@@ -694,6 +734,10 @@ async fn reinstall_dependency(id: String, app: AppHandle) -> Result<(), String> 
 
 #[tauri::command]
 async fn search_lrclib(query: String) -> Result<Vec<LrcSearchResult>, String> {
+    search_lrclib_internal(query).await
+}
+
+pub(crate) async fn search_lrclib_internal(query: String) -> Result<Vec<LrcSearchResult>, String> {
     let url = format!("https://lrclib.net/api/search?q={}", urlencoding::encode(&query));
     let response = reqwest::get(url).await.map_err(|e| e.to_string())?;
     let results: Vec<LrcLibResult> = response.json().await.map_err(|e: reqwest::Error| e.to_string())?;
@@ -749,6 +793,10 @@ struct LrcSearchResult {
 
 #[tauri::command]
 async fn apply_alternative_lyrics(video_id: String, lyrics_text: String, lrclib_id: Option<i64>, app: AppHandle) -> Result<String, String> {
+    apply_alternative_lyrics_internal(video_id, lyrics_text, lrclib_id, app).await
+}
+
+pub(crate) async fn apply_alternative_lyrics_internal(video_id: String, lyrics_text: String, lrclib_id: Option<i64>, app: AppHandle) -> Result<String, String> {
     let state = app.state::<AppState>();
     
     // 1. Get existing song info
@@ -841,6 +889,10 @@ async fn apply_alternative_lyrics(video_id: String, lyrics_text: String, lrclib_
 
 #[tauri::command]
 async fn get_recommendations(app: tauri::AppHandle) -> Result<Vec<db::CachedSong>, String> {
+    get_recommendations_internal(app).await
+}
+
+pub(crate) async fn get_recommendations_internal(app: tauri::AppHandle) -> Result<Vec<db::CachedSong>, String> {
     let state = app.state::<AppState>();
     let conn = state.db_conn.lock().unwrap();
     db::get_recommendations(&conn, 20).map_err(|e| e.to_string())
@@ -859,6 +911,10 @@ struct LyricsStatus {
 
 #[tauri::command]
 async fn get_lyrics_status(video_id: String, app: tauri::AppHandle) -> Result<LyricsStatus, String> {
+    get_lyrics_status_internal(video_id, app).await
+}
+
+pub(crate) async fn get_lyrics_status_internal(video_id: String, app: tauri::AppHandle) -> Result<LyricsStatus, String> {
     let state = app.state::<AppState>();
     
     let song = {
@@ -918,6 +974,10 @@ pub fn run() {
             if !uploads_dir.exists() {
                 std::fs::create_dir_all(&uploads_dir).unwrap();
             }
+            let separate_dir = app_dir.join("separate");
+            if !separate_dir.exists() {
+                std::fs::create_dir_all(&separate_dir).unwrap();
+            }
             let db_path = app_dir.join("kraoq.db");
             
             let python_dir = if cfg!(debug_assertions) {
@@ -938,6 +998,8 @@ pub fn run() {
                 active_processes: Arc::new(AsyncMutex::new(HashMap::new())),
                 party_port: Mutex::new(None),
                 party_queue: Mutex::new(Vec::new()),
+                local_server_tx: Mutex::new(None),
+                local_ws_clients: Arc::new(AsyncMutex::new(Vec::new())),
             });
 
             
@@ -963,7 +1025,9 @@ pub fn run() {
             get_recommendations,
             search_lrclib,
             apply_alternative_lyrics,
-            get_lyrics_status
+            get_lyrics_status,
+            server::start_http_server,
+            server::stop_http_server
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
