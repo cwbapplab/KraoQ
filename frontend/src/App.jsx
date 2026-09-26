@@ -1545,7 +1545,7 @@ function App() {
                 window.history.pushState({ view: 'search' }, '');
             }
         } catch (e) {
-            setStatus("Error: " + e.message);
+            setStatus("Error: " + (e?.message ?? e));
         } finally {
             setIsSearching(false);
             setIsLoadingMore(false);
