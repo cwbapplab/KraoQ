@@ -27,7 +27,7 @@ It is a [Tauri](https://tauri.app) desktop application: a React front end, a Rus
 4. **Align** — `align_elrc.py` uses `stable-ts` to force-align the vocal stem against the lyrics, upgrading the `.lrc` to a word-level Enhanced LRC. If vocal isolation is disabled in Settings, the full track is aligned instead — faster, but the word timings are less precise.
 5. **Cache & play** — the result is written to SQLite and streamed back to the UI, which renders the synced lyrics over the instrumental.
 
-The Rust core (`src-tauri/`) orchestrates all of this and exposes it to the front end through Tauri commands: `search`, `suggestions`, `process_yt`, `cancel_processing`, `setup_dependencies`, `reinstall_dependency`, `get_app_config`, `set_config`, `check_gpu_status`, and the party-mode commands.
+The Rust core (`frontend/src-tauri/`) orchestrates all of this and exposes it to the front end through Tauri commands: `search`, `suggestions`, `process_yt`, `cancel_processing`, `setup_dependencies`, `reinstall_dependency`, `get_app_config`, `set_config`, `check_gpu_status`, and the party-mode commands.
 
 ---
 
@@ -56,6 +56,8 @@ The Rust core (`src-tauri/`) orchestrates all of this and exposes it to the fron
 
 ## Getting started
 
+Run these commands from the `frontend/` workspace:
+
 ```bash
 yarn install     # install front-end dependencies
 yarn dev         # run the app in development (tauri dev)
@@ -71,7 +73,7 @@ yarn build        # production desktop build (tauri build)
 yarn build-web    # build just the Vite bundle
 ```
 
-Android development is available through `start_android_dev.ps1` (requires an Android SDK and JDK; runs `tauri android dev` as administrator).
+Android development is available through `frontend/start_android_dev.ps1` (requires an Android SDK and JDK; runs `tauri android dev` as administrator).
 
 ---
 
@@ -82,7 +84,7 @@ On first launch the app probes for an NVIDIA GPU and, if one is found, asks whet
 1. **Python runtime** — downloads a self-contained Python 3.11 environment.
 2. **FFmpeg** — downloads the FFmpeg build used for audio conversion.
 3. **AI models** — downloads the vocal-separation model weights.
-4. **Python modules** — installs `python/requirements.txt` for CPU mode (`yt-dlp`, `ytmusicapi`, `requests`, `audio-separator`, `mutagen`, `onnxruntime`, `stable-ts`) or `python/requirements-gpu.txt` when CUDA is enabled (`audio-separator[gpu]` and `onnxruntime-gpu`).
+4. **Python modules** — installs `frontend/src-tauri/python/requirements.txt` for CPU mode (`yt-dlp`, `ytmusicapi`, `requests`, `audio-separator`, `mutagen`, `onnxruntime`, `stable-ts`) or `frontend/src-tauri/python/requirements-gpu.txt` when CUDA is enabled (`audio-separator[gpu]` and `onnxruntime-gpu`).
 5. **GPU toolkit** — only when CUDA was chosen: installs a CUDA-enabled PyTorch build and the matching NVIDIA runtime libraries. On CPU-only installs this step is skipped and nothing GPU-related is downloaded.
 
 Everything is written to the app data directory (see below), so re-running setup is safe.
@@ -122,7 +124,7 @@ What the relay server does:
 - **Mobile client UI** — it serves the web client (`public/`) that phones load from the QR link over HTTPS (required for screen-wake/WakeLock).
 - **REST proxying** — phone requests such as search and lyrics are proxied through the relay to the host desktop, which does the actual work.
 
-Because the phones connect through it, the relay must be reachable by them — on the same LAN or on a public host. Point the app at it in **Settings → Cloud Relay URL** (for example `http://192.168.1.5:3000`); leave it blank to auto-detect the machine's local IP. The relay listens on HTTP port `3000` (host connection and pairing) and HTTPS port `3001` (mobile). See [`../relay_server/DEPLOYMENT.md`](../relay_server/DEPLOYMENT.md) for how to configure and run it (Docker or Node.js, PostgreSQL, environment variables, and TLS).
+Because the phones connect through it, the relay must be reachable by them — on the same LAN or on a public host. Point the app at it in **Settings → Cloud Relay URL** (for example `http://192.168.1.5:3000`); leave it blank to auto-detect the machine's local IP. The relay listens on HTTP port `3000` (host connection and pairing) and HTTPS port `3001` (mobile). See [`relay_server/DEPLOYMENT.md`](relay_server/DEPLOYMENT.md) for how to configure and run it (Docker or Node.js, PostgreSQL, environment variables, and TLS).
 
 ---
 
@@ -147,8 +149,8 @@ Settings are managed in-app. `settings.json` holds `gpuEnabled`, `gpuChoiceMade`
 ## Project structure
 
 ```
-src/                    React application (UI, player, settings, party mode)
-src-tauri/
+frontend/src/                    React application (UI, player, settings, party mode)
+frontend/src-tauri/
 ├── src/
 │   ├── lib.rs          Tauri commands, app state, processing pipeline
 │   ├── setup.rs        First-run dependency bootstrapper
@@ -156,9 +158,10 @@ src-tauri/
 │   └── server.rs       Local presentation server (port 1425) and relay client
 ├── python/             yt-dlp / audio-separator / alignment scripts
 └── tauri.conf.json     Bundler and window configuration
+relay_server/           Party-mode relay server (Docker / Node.js / PostgreSQL)
 ```
 
-The **relay server** that brokered party mode is a separate project alongside this one, at [`../relay_server/`](../relay_server) — see [Party mode](#party-mode).
+The **relay server** that brokered party mode is a separate project alongside this one, at [`relay_server/`](relay_server) — see [Party mode](#party-mode).
 
 ---
 
@@ -171,6 +174,16 @@ The **relay server** that brokered party mode is a separate project alongside th
 
 ---
 
+## Tools used
+
+This software was created with the help of AI. Tools used during development:
+
+- Antigravity
+- Gemini
+- DeepSeek 4.1 Flash
+
+---
+
 ## License
 
 Copyright (C) 2026 KraoQ contributors.
@@ -179,7 +192,7 @@ This program is free software: you can redistribute it and/or modify it under th
 
 This program is distributed in the hope that it will be useful, but **WITHOUT ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>. The full text is included in [LICENSE](./LICENSE).
+You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>. The full text is included in [LICENSE](frontend/LICENSE).
 
 ---
 
