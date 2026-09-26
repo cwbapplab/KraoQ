@@ -52,7 +52,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm install
+        run: yarn install --frozen-lockfile
 
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v0

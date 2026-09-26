@@ -470,7 +470,12 @@
   resolved "https://registry.yarnpkg.com/@rollup/rollup-win32-x64-msvc/-/rollup-win32-x64-msvc-4.63.5.tgz#66e1eb4e47e993314699bfd03eaa54e36790e8d9"
   integrity sha512-ypfC34F3RKXvCXBglGqGMsUSMKlgwd1HX9AOAlx9RoZZ6GaI42YHVeKpzg3JG+wpBUJYTG+NNZhqbDWL8tBZkw==
 
-"@tauri-apps/api@^2.10.1", "@tauri-apps/api@^2.11.0":
+"@tauri-apps/api@2.10.1":
+  version "2.10.1"
+  resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-2.10.1.tgz#57c1bae6114ec33d977eb2b50dfefc25fa84fc93"
+  integrity sha512-hKL/jWf293UDSUN09rR69hrToyIXBb8CjGaWC7gfinvnQrBVvnLr08FeFi38gxtugAVyVcTa5/FD/Xnkb1siBw==
+
+"@tauri-apps/api@^2.8.0":
   version "2.12.0"
   resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-2.12.0.tgz#9048cede2961ac8e255d2c023692a54b31bffd6a"
   integrity sha512-fUSxFX8VABYe9W9K5ROdEaKVkNUFRcMSRofjruvaxztXA+I0XnQHcYHF8m/a6iExRUxsUf0HsFWhPBuH9IgzJw==
@@ -547,12 +552,12 @@
     "@tauri-apps/cli-win32-ia32-msvc" "2.11.5"
     "@tauri-apps/cli-win32-x64-msvc" "2.11.5"
 
-"@tauri-apps/plugin-fs@^2.4.5":
-  version "2.5.2"
-  resolved "https://registry.yarnpkg.com/@tauri-apps/plugin-fs/-/plugin-fs-2.5.2.tgz#262ff39542e50e96f1ee8b6b7d471898736d6609"
-  integrity sha512-XXvMSnFiob+G1H+YHCDf+bzWVumseQuEIhzpbOJzevUfL4k0U+sTApZWJHpoLiamggnVPJm5dJ5sDsniRyWxlg==
+"@tauri-apps/plugin-fs@2.4.5":
+  version "2.4.5"
+  resolved "https://registry.yarnpkg.com/@tauri-apps/plugin-fs/-/plugin-fs-2.4.5.tgz#4b32b6de32e2ee735632bff356fab09fcc281b42"
+  integrity sha512-dVxWWGE6VrOxC7/jlhyE+ON/Cc2REJlM35R3PJX3UvFw2XwYhLGQVAIyrehenDdKjotipjYEVc4YjOl3qq90fA==
   dependencies:
-    "@tauri-apps/api" "^2.11.0"
+    "@tauri-apps/api" "^2.8.0"
 
 "@types/babel__core@^7.20.5":
   version "7.20.5"
