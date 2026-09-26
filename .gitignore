@@ -51,3 +51,14 @@ backend/cache.json
 backend/uploads/*
 !backend/uploads/.gitkeep
 audio-processor/debug_separate_service.log
+
+# Local artifacts & secrets (never commit)
+*.pfx
+*.p12
+logs.txt
+**/logs.txt
+*.bak
+relay_server/key.pem.pub
+.commandcode/
+frontend/src-processor/temp_uploads/
+frontend/src-processor/temp_outputs/
