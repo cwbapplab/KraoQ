@@ -20,13 +20,6 @@ const getIsPresentation = () => {
 const isPresentationView = getIsPresentation();
 window.__KRAOQ_PRESENTATION__ = isPresentationView; // For browser console debugging
 
-console.log("[KraoQ] Root Check TESTING NEW CODE:", {
-    detected: isPresentationView,
-    href: window.location.href,
-    search: window.location.search,
-    hash: window.location.hash
-});
-
 ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
         {isPresentationView ? <PresentationView /> : <App />}

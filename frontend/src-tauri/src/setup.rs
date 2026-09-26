@@ -1,13 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::fs::File;
-use std::io::{Write, Read};
-use reqwest::Client;
-use tauri::{AppHandle, Manager, State, Emitter};
-use zip::ZipArchive;
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-use crate::AppState;
+use std::io::Write;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use tauri::{AppHandle, Manager, Emitter};
 use serde_json::json;
 
 const FFMPEG_URL: &str = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
@@ -152,49 +148,147 @@ pub async fn install_pip_modules(app: &AppHandle, python_exe: &PathBuf, req_path
     Ok(())
 }
 
-pub async fn install_gpu_acceleration(app: &AppHandle, python_exe: &PathBuf, torch_version: &str, cuda_version: &str, current_step: i32) -> Result<(), String> {
-    emit_step(app, "gpu", &format!("GPU Acceleration (Torch {}, CUDA {})", torch_version, cuda_version), "loading", 10, current_step);
-    
-    let cuda_tag = cuda_version.replace(".", ""); 
-    let cuda_major = cuda_version.split('.').next().unwrap_or("12");
+/// Installs a self-consistent PyTorch set. `torchaudio` shares torch's version
+/// numbers, so it must be pinned to `torch_version`: installing it unpinned
+/// pulls the newest build, whose native extension then fails to load against the
+/// pinned torch and word-level lyric alignment silently stops working.
+///
+/// When `cuda_version` is set the CUDA wheels are used (their bundled CUDA/cuDNN/
+/// cuBLAS runtime DLLs under torch/lib are reused by ONNX Runtime via
+/// add_nvidia_paths()). We deliberately do NOT install nvidia-*-cuXX packages:
+/// several (e.g. nvidia-nccl-cu12) are placeholders on PyPI that fail to build.
+pub async fn install_torch_stack(app: &AppHandle, python_exe: &PathBuf, torch_version: &str, cuda_version: Option<&str>, current_step: i32) -> Result<(), String> {
+    let label = match cuda_version {
+        Some(cu) => format!("GPU Acceleration (Torch {}, CUDA {})", torch_version, cu),
+        None => format!("PyTorch Stack ({})", torch_version),
+    };
+    emit_step(app, "gpu", &label, "loading", 30, current_step);
 
-    // 1. Install CUDA-enabled Torch
-    emit_step(app, "gpu", "Installing GPU Optimized AI Core...", "loading", 30, current_step);
-    let mut torch_install = tokio::process::Command::new(python_exe);
-    #[cfg(target_os = "windows")] { torch_install.creation_flags(0x08000000); }
-    torch_install.arg("-m").arg("pip").arg("install")
-        .arg(format!("torch=={}", torch_version)).arg("torchvision").arg("torchaudio")
-        .arg("--index-url").arg(format!("https://download.pytorch.org/whl/cu{}", cuda_tag))
+    let mut cmd = tokio::process::Command::new(python_exe);
+    #[cfg(target_os = "windows")] { cmd.creation_flags(0x08000000); }
+    cmd.arg("-m").arg("pip").arg("install")
+        .arg(format!("torch=={}", torch_version))
+        .arg(format!("torchaudio=={}", torch_version))
+        .arg("torchvision")
         .arg("--force-reinstall")
         .arg("--no-warn-script-location");
-    
-    let torch_output = torch_install.output().await.map_err(|e| format!("Torch install failed: {}", e))?;
-    if !torch_output.status.success() {
-        println!("GPU Torch install failed: {}", String::from_utf8_lossy(&torch_output.stderr));
+    if let Some(cu) = cuda_version {
+        cmd.arg("--index-url").arg(format!("https://download.pytorch.org/whl/cu{}", cu.replace('.', "")));
     }
 
-    // 2. Install NVIDIA Runtime Libraries
-    emit_step(app, "gpu", "Installing NVIDIA Runtime Libraries...", "loading", 70, current_step);
-    let mut nvidia_install = tokio::process::Command::new(python_exe);
-    #[cfg(target_os = "windows")] { nvidia_install.creation_flags(0x08000000); }
-    nvidia_install.arg("-m").arg("pip").arg("install")
-        .arg(format!("nvidia-cuda-runtime-cu{}", cuda_major))
-        .arg(format!("nvidia-cudnn-cu{}", cuda_major))
-        .arg(format!("nvidia-cublas-cu{}", cuda_major))
-        .arg(format!("nvidia-cuda-cupti-cu{}", cuda_major))
-        .arg(format!("nvidia-cuda-nvrtc-cu{}", cuda_major))
-        .arg(format!("nvidia-nvjitlink-cu{}", cuda_major))
-        .arg(format!("nvidia-curand-cu{}", cuda_major))
-        .arg(format!("nvidia-cusolver-cu{}", cuda_major))
-        .arg(format!("nvidia-cusparse-cu{}", cuda_major))
-        .arg(format!("nvidia-nccl-cu{}", cuda_major))
-        .arg(format!("nvidia-nvtx-cu{}", cuda_major))
-        .arg("--no-warn-script-location");
-
-    let _ = nvidia_install.output().await;
+    let output = cmd.output().await.map_err(|e| format!("Torch install failed: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        emit_step(app, "gpu", "Torch Stack (Error)", "error", 100, current_step);
+        return Err(format!("Torch install failed: {}", stderr));
+    }
 
     emit_step(app, "gpu", "GPU Acceleration (CUDA/NVIDIA)", "done", 100, current_step);
     Ok(())
+}
+
+pub async fn install_gpu_acceleration(app: &AppHandle, python_exe: &PathBuf, torch_version: &str, cuda_version: &str, current_step: i32) -> Result<(), String> {
+    install_torch_stack(app, python_exe, torch_version, Some(cuda_version), current_step).await
+}
+
+/// The onnxruntime-gpu version spec matching the PyTorch CUDA major version.
+/// 1.27+ switched to a CUDA 13 build; CUDA 12 needs the `<1.27` builds.
+pub fn onnxruntime_spec(cuda_major: &str) -> String {
+    if cuda_major == "13" {
+        ">=1.27".to_string()
+    } else {
+        "<1.27".to_string()
+    }
+}
+
+/// Installs (or repairs) ONNX Runtime pinned to the same CUDA major as PyTorch.
+/// The CUDA/cuDNN/cuBLAS runtime DLLs come from PyTorch's bundled torch/lib
+/// (exposed via add_nvidia_paths), so no nvidia-*-cuXX packages are installed.
+pub async fn install_onnxruntime(app: &AppHandle, python_exe: &PathBuf, cuda_major: &str, current_step: i32) -> Result<(), String> {
+    let spec = onnxruntime_spec(cuda_major);
+    emit_step(app, "pip", &format!("ONNX Runtime (CUDA {})", cuda_major), "loading", 60, current_step);
+
+    let target = format!("onnxruntime-gpu{}", spec);
+    let mut cmd = tokio::process::Command::new(python_exe);
+    #[cfg(target_os = "windows")] { cmd.creation_flags(0x08000000); }
+    cmd.arg("-m").arg("pip").arg("install")
+        .arg("--force-reinstall")
+        .arg(&target)
+        .arg("--no-warn-script-location");
+
+    let output = cmd.output().await.map_err(|e| format!("ONNX Runtime install failed: {}", e))?;
+    if !output.status.success() {
+        emit_step(app, "pip", "ONNX Runtime (Error)", "error", 100, current_step);
+        return Err(format!("ONNX Runtime install failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    emit_step(app, "pip", "ONNX Runtime", "done", 100, current_step);
+    Ok(())
+}
+
+/// Hash of the requirements files (+ extra config) used to detect when the
+/// dependency set changed and must be re-applied.
+pub fn deps_hash(paths: &[PathBuf], extra: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    for p in paths {
+        p.to_string_lossy().hash(&mut hasher);
+        if let Ok(content) = std::fs::read_to_string(p) {
+            content.hash(&mut hasher);
+        }
+    }
+    extra.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+/// A marker file is up-to-date when its content equals `hash`.
+pub fn marker_matches(marker: &PathBuf, hash: &str) -> bool {
+    std::fs::read_to_string(marker)
+        .map(|c| c.trim() == hash)
+        .unwrap_or(false)
+}
+
+/// Best-effort, pre-install detection of an NVIDIA GPU. Uses the Windows
+/// video-controller list (works without drivers) and falls back to nvidia-smi.
+pub async fn detect_nvidia_gpu() -> (bool, String) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut ps = tokio::process::Command::new("powershell");
+        ps.creation_flags(0x08000000);
+        ps.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+        ]);
+        if let Ok(out) = ps.output().await {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if let Some(name) = stdout
+                    .lines()
+                    .map(|l| l.trim())
+                    .find(|l| l.to_ascii_lowercase().contains("nvidia"))
+                {
+                    return (true, name.to_string());
+                }
+            }
+        }
+    }
+
+    let mut smi = tokio::process::Command::new("nvidia-smi");
+    #[cfg(target_os = "windows")]
+    {
+        smi.creation_flags(0x08000000);
+    }
+    smi.args(["--query-gpu=name", "--format=csv,noheader"]);
+    if let Ok(out) = smi.output().await {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Some(name) = stdout.lines().map(|l| l.trim()).find(|l| !l.is_empty()) {
+                return (true, name.to_string());
+            }
+        }
+    }
+
+    (false, String::new())
 }
 
 fn emit_step(app: &AppHandle, id: &str, label: &str, status: &str, progress: i32, step_idx: i32) {
@@ -241,24 +335,48 @@ pub async fn setup_dependencies(app: AppHandle) -> Result<String, String> {
 
     // --- STEP 4: Python Modules ---
     let state = app.state::<crate::AppState>();
-    let req_path = state.python_dir.join("requirements.txt");
+    let req_file = if config.gpu_enabled { "requirements-gpu.txt" } else { "requirements.txt" };
+    let req_path = state.python_dir.join(req_file);
     let pip_done_file = app_dir.join(".pip_setup_done");
     let gpu_done_file = app_dir.join(".gpu_setup_done");
-    if !pip_done_file.exists() {
+
+    // Re-run pip whenever the requirements files or the torch/CUDA selection
+    // change, so pins (e.g. onnxruntime-gpu<1.27) are actually applied.
+    let pip_hash = deps_hash(
+        &[state.python_dir.join("requirements.txt"), state.python_dir.join("requirements-gpu.txt")],
+        &format!("{}|{}", config.torch_version, config.cuda_version),
+    );
+    if !marker_matches(&pip_done_file, &pip_hash) {
         install_pip_modules(&app, &python_exe, &req_path, 4).await?;
-        let _ = std::fs::File::create(&pip_done_file);
-        // Pip modules (audio-separator[gpu]) may install CPU-only torch,
-        // so we must always re-run GPU acceleration after pip install.
-        let _ = std::fs::remove_file(&gpu_done_file);
+        if config.gpu_enabled {
+            let cuda_major = config.cuda_version.split('.').next().unwrap_or("12");
+            install_onnxruntime(&app, &python_exe, cuda_major, 4).await?;
+            // The GPU requirements may pull CPU-only torch, so re-run GPU acceleration
+            // after a pip install when CUDA is enabled.
+            let _ = std::fs::remove_file(&gpu_done_file);
+        }
+        let _ = std::fs::write(&pip_done_file, &pip_hash);
     }
     emit_step(&app, "pip", "Neural Network Modules (Pip)", "done", 100, 4);
 
-    // --- STEP 5: GPU Acceleration (Optional but Recommended) ---
-    if !gpu_done_file.exists() {
-        install_gpu_acceleration(&app, &python_exe, &config.torch_version, &config.cuda_version, 5).await?;
-        let _ = std::fs::File::create(&gpu_done_file);
+    // --- STEP 5: GPU Acceleration (only when the user opted in) ---
+    let gpu_hash = format!("{}|{}", config.torch_version, config.cuda_version);
+    if config.gpu_enabled && !marker_matches(&gpu_done_file, &gpu_hash) {
+        // Skip the heavy torch reinstall when the diagnostic already reports a
+        // working CUDA-enabled build.
+        let torch_ok = match crate::check_gpu_status_internal(app.clone()).await {
+            Ok(status) => status.torch_cuda_available,
+            Err(_) => false,
+        };
+        if torch_ok {
+            emit_step(&app, "gpu", "GPU Acceleration (CUDA/NVIDIA)", "done", 100, 5);
+        } else {
+            install_gpu_acceleration(&app, &python_exe, &config.torch_version, &config.cuda_version, 5).await?;
+        }
+        let _ = std::fs::write(&gpu_done_file, &gpu_hash);
     }
-    emit_step(&app, "gpu", "GPU Acceleration (CUDA/NVIDIA)", "done", 100, 5);
+    let gpu_label = if config.gpu_enabled { "GPU Acceleration (CUDA/NVIDIA)" } else { "GPU Acceleration (Skipped — CPU mode)" };
+    emit_step(&app, "gpu", gpu_label, "done", 100, 5);
 
     app.emit("setup_complete", json!({"success": true})).unwrap();
     Ok("Setup Complete".to_string())

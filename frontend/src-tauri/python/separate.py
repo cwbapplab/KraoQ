@@ -39,6 +39,16 @@ def add_nvidia_paths():
             if os.path.isdir(cublas_path): paths_to_add.append(cublas_path)
             if os.path.isdir(cudnn_path): paths_to_add.append(cudnn_path)
 
+        # torch bundles its own CUDA/cuDNN/cuBLAS DLLs; make them visible so the
+        # ONNX Runtime CUDA execution provider can load against them.
+        try:
+            import torch
+            torch_lib = os.path.join(os.path.dirname(torch.__file__), 'lib')
+            if os.path.isdir(torch_lib):
+                paths_to_add.append(torch_lib)
+        except Exception:
+            pass
+
         for p in paths_to_add:
             if p not in os.environ['PATH']:
                 os.environ['PATH'] = p + os.pathsep + os.environ['PATH']
@@ -127,16 +137,16 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
             log_safe(f"Starting run for {suffix} (preset={preset_name})...")
             
             if preset_name == "none":
-                # Force the usage of UVR-MDX-NET-Inst_HQ_5.onnx
-                invert_spec = True if suffix == "voc" else False
-                log_safe(f"Force running UVR-MDX-NET-Inst_HQ_5.onnx (invert_using_spec={invert_spec})...")
+                # Force the usage of UVR-MDX-NET-Inst_HQ_5.onnx. The model returns
+                # both stems natively, so we never use spectral inversion (which
+                # attempted a 142 GiB allocation on long tracks).
+                log_safe(f"Force running UVR-MDX-NET-Inst_HQ_5.onnx...")
                 
                 sep = Separator(
                     log_level=logging.INFO, 
                     model_file_dir=uvr_model_dir,
                     output_dir=output_dir,
-                    output_format='mp3',
-                    invert_using_spec=invert_spec
+                    output_format='mp3'
                 )
                 
                 # Apply GPU patch to avoid crashes if needed to instantiate raw model providers
@@ -193,18 +203,40 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
                 "files": output_files
             }
 
-        inst_preset = os.getenv("INST_PRESET", "karaoke")
+        isolate_vocals = os.getenv("ISOLATE_VOCALS", "1") == "1"
+        log_safe(f"Isolate Vocals setting: {isolate_vocals}")
+
+        inst_preset = os.getenv("INST_PRESET", "instrumental_clean")
         voc_preset = os.getenv("VOC_PRESET", "vocal_clean")
+        # Two heavy runs at once oversubscribe a single GPU (contention/OOM); run
+        # them sequentially unless explicitly enabled.
+        parallel = os.getenv("KRAOQ_PARALLEL_SEPARATION", "0") == "1"
+        log_safe(f"Parallel separation: {parallel}")
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_inst = executor.submit(run_single_separation, inst_preset, "inst")
-            fut_voc = executor.submit(run_single_separation, voc_preset, "voc")
+        res_voc = None
+        single_model = inst_preset == "none" and isolate_vocals and voc_preset == "none"
+        if single_model:
+            # One model produces both stems — a single pass is enough.
+            log_safe("Single-model preset 'none' for both stems. Running one pass.")
+            res_inst = run_single_separation("none", "inst")
+            res_voc = res_inst
+        elif isolate_vocals:
+            if parallel:
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    fut_inst = executor.submit(run_single_separation, inst_preset, "inst")
+                    fut_voc = executor.submit(run_single_separation, voc_preset, "voc")
 
-            res_inst = fut_inst.result()
-            res_voc = fut_voc.result()
+                    res_inst = fut_inst.result()
+                    res_voc = fut_voc.result()
+            else:
+                res_inst = run_single_separation(inst_preset, "inst")
+                res_voc = run_single_separation(voc_preset, "voc")
+        else:
+            log_safe("Skipping vocal isolation run (ISOLATE_VOCALS=0).")
+            res_inst = run_single_separation(inst_preset, "inst")
 
         # Combine results:
-        # Instrumental from standard run, Vocals from spec invert run
+        # Instrumental from the instrumental run, Vocals from the vocal run.
         inst_file = res_inst["instrumental"]
         final_inst = os.path.join(output_dir, f"{audio_base}_(Instrumental).mp3")
         if os.path.exists(inst_file):
@@ -213,26 +245,28 @@ def separate(audio_path, output_dir, model_name="UVR-MDX-NET-Inst_HQ_5.onnx", re
             os.rename(inst_file, final_inst)
             log_safe(f"Renamed instrumental to {final_inst}")
 
-        voc_file = res_voc["vocals"]
-        final_voc = os.path.join(output_dir, f"{audio_base}_(Vocals).mp3")
-        if os.path.exists(voc_file):
-            if os.path.exists(final_voc):
-                os.remove(final_voc)
-            os.rename(voc_file, final_voc)
-            log_safe(f"Renamed vocals to {final_voc}")
+        final_voc = None
+        if res_voc is not None:
+            voc_file = res_voc["vocals"]
+            final_voc = os.path.join(output_dir, f"{audio_base}_(Vocals).mp3")
+            if os.path.exists(voc_file):
+                if os.path.exists(final_voc):
+                    os.remove(final_voc)
+                os.rename(voc_file, final_voc)
+                log_safe(f"Renamed vocals to {final_voc}")
 
         # Clean up other files
         try:
             # Delete intermediate files that were not used
             if os.path.exists(res_inst["vocals"]): os.remove(res_inst["vocals"])
-            if os.path.exists(res_voc["instrumental"]): os.remove(res_voc["instrumental"])
+            if res_voc is not None and os.path.exists(res_voc["instrumental"]): os.remove(res_voc["instrumental"])
         except:
             pass
 
         result = {
             "instrumental": os.path.basename(final_inst),
-            "vocals": os.path.basename(final_voc),
-            "files": [os.path.basename(final_inst), os.path.basename(final_voc)]
+            "vocals": os.path.basename(final_voc) if final_voc else None,
+            "files": [os.path.basename(final_inst)] + ([os.path.basename(final_voc)] if final_voc else [])
         }
         
         log_safe(f"Result: {result}")

@@ -107,8 +107,8 @@ function LyricLine({ line, isActive, audioRef, displayNextText, isNext, gap, con
                             display: 'inline-block',
                             color: isPassed ? '#a5b4fc' : 'rgba(255,255,255,0.4)',
                             backgroundImage: !isActive ? 'none' : undefined,
-                            webkitBackgroundClip: !isActive ? 'unset' : undefined,
-                            webkitTextFillColor: !isActive ? (isPassed ? '#a5b4fc' : 'rgba(255,255,255,0.4)') : undefined,
+                            WebkitBackgroundClip: !isActive ? 'unset' : undefined,
+                            WebkitTextFillColor: !isActive ? (isPassed ? '#a5b4fc' : 'rgba(255,255,255,0.4)') : undefined,
                             transform: !isActive ? 'scale(1.0)' : undefined,
                             textShadow: !isActive ? 'none' : undefined
                         }}
@@ -362,7 +362,7 @@ const KaraokePlayer = ({
                                             key={idx}
                                             className={`flex items-center justify-center transition-all duration-500 h-[220px] px-6 ${idx === activeLineIndex ? 'scale-105 opacity-100' : 'scale-95 opacity-30'}`}
                                         >
-                                            <span
+                                            <div
                                                 className={`font-black transition-all text-center leading-[1.1] ${idx === activeLineIndex ? '' : 'text-white'}`}
                                                 style={{
                                                     fontSize: 'clamp(1.2rem, 6vw, 3.5rem)',
@@ -381,7 +381,7 @@ const KaraokePlayer = ({
                                                     isNext={idx === activeLineIndex + 1}
                                                     wordRefs={wordRefs}
                                                 />
-                                            </span>
+                                            </div>
                                         </div>
                                     )
                                 })}

@@ -384,7 +384,6 @@ pub async fn start_http_server(app: tauri::AppHandle) -> Result<String, String> 
                     let check = parent.join("dist");
                     if check.exists() {
                         p = check;
-                        found = true;
                     }
                 }
             }

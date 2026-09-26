@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw, Cpu, Monitor, Check, Download } from 'lucide-react';
+import { Search, Music, Mic2, Maximize2, Minimize2, Play, Pause, X, ArrowRight, Loader2, Trash2, CheckCircle2, Circle, AlertCircle, Settings, Zap, RefreshCw, Cpu, Monitor, Check, Download, Wrench } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import AuroraBackground from './components/AuroraBackground';
 import KaraokePlayer from './components/KaraokePlayer';
@@ -11,8 +11,8 @@ const DEFAULT_THUMBNAIL = `data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBQVUJMSUM
 const AVAILABLE_VERSIONS = {
     pythonVersion: ['3.11.8', '3.10.11', '3.9.13'],
     ffmpegVersion: ['latest', '7.1', '6.1', '5.1'],
-    torchVersion: ['2.5.1', '2.4.1', '2.3.1', '2.2.2'],
-    cudaVersion: ['12.1', '11.8']
+    torchVersion: ['2.7.1', '2.5.1', '2.4.1', '2.3.1', '2.2.2'],
+    cudaVersion: ['12.8', '12.1', '11.8']
 };
 
 const isMobile = () => {
@@ -38,6 +38,17 @@ const appListen = async (event, handler) => {
         }
     }
     return () => {};
+};
+
+const appEmit = async (event, payload = {}) => {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+        try {
+            const { emit } = await import('@tauri-apps/api/event');
+            return await emit(event, payload);
+        } catch (e) {
+            console.error(`Tauri emit error for ${event}:`, e);
+        }
+    }
 };
 
 const appInvoke = async (cmd, args = {}) => {
@@ -261,6 +272,9 @@ function App() {
         { id: 'pip', label: 'Neural Modules', status: 'pending', progress: 0 },
         { id: 'gpu', label: 'GPU Acceleration', status: 'pending', progress: 0 },
     ]);
+    const [gpuSetupState, setGpuSetupState] = useState(null); // { nvidiaDetected, nvidiaName, gpuInstalled }
+    const [showGpuChoice, setShowGpuChoice] = useState(false);
+    const [gpuChoiceBusy, setGpuChoiceBusy] = useState(false);
     const [isReady, setIsReady] = useState(isPresentationView);
     const [query, setQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
@@ -297,7 +311,7 @@ function App() {
     // const [showLoginModal, setShowLoginModal] = useState(false); // Removed for local single-user
     const [contextMenu, setContextMenu] = useState({ isOpen: false, videoId: null, position: { x: 0, y: 0 } });
     const [showSettings, setShowSettings] = useState(false);
-    const [appConfig, setAppConfig] = useState({ gpuEnabled: true });
+    const [appConfig, setAppConfig] = useState({ gpuEnabled: true, isolateVocals: true });
     const [isPartyMode, setIsPartyMode] = useState(false);
     const [partyUrl, setPartyUrl] = useState("");
     const [activePartyId, setActivePartyId] = useState("");
@@ -431,12 +445,35 @@ function App() {
                     setIsReady(true);
                 });
 
-                await invoke('setup_dependencies');
-
-                return () => {
+                const cleanup = () => {
                     unlistenStep();
                     unlistenComplete();
                 };
+
+                const config = await loadConfig();
+
+                let gpuState = null;
+                try {
+                    gpuState = await invoke('get_gpu_setup_state');
+                } catch (e) {
+                    console.error("GPU probe failed", e);
+                }
+                setGpuSetupState(gpuState);
+
+                // Ask about CUDA only on a fresh install, and only when an NVIDIA card exists.
+                const decided = config?.gpuChoiceMade || gpuState?.gpuInstalled;
+                if (!decided) {
+                    if (gpuState?.nvidiaDetected) {
+                        setShowGpuChoice(true);
+                        return cleanup;
+                    }
+                    // No supported NVIDIA card — proceed CPU-only.
+                    await updateConfig({ ...config, gpuEnabled: false, gpuChoiceMade: true });
+                }
+
+                await invoke('setup_dependencies');
+
+                return cleanup;
             } catch (e) {
                 console.error("Setup failed", e);
                 setSetupStatus("Critical Error: " + e.message);
@@ -444,7 +481,6 @@ function App() {
         };
 
         unlisten = initApp();
-        loadConfig();
 
         return () => {
             if (unlisten) unlisten.then(f => f && typeof f === 'function' && f());
@@ -476,7 +512,7 @@ function App() {
     };
 
     const loadConfig = async () => {
-        if (!isTauri || isPresentationView) return;
+        if (!isTauri || isPresentationView) return null;
         try {
             const config = await invoke('get_app_config');
             setAppConfig(config);
@@ -487,8 +523,10 @@ function App() {
                 // Token expired, clear it
                 updateConfig({ ...config, userToken: '', username: '' });
             }
+            return config;
         } catch (e) {
             console.error("Failed to load config", e);
+            return null;
         }
     };
 
@@ -516,9 +554,11 @@ function App() {
 
     // Check GPU status when settings are opened
     useEffect(() => {
-        if (showSettings && !gpuStatus && !isCheckingGpu) {
+        if (!showSettings || !isTauri) return;
+        if (!gpuStatus && !isCheckingGpu) {
             checkGpuStatus();
         }
+        invoke('get_gpu_setup_state').then(setGpuSetupState).catch(e => console.error('GPU state failed', e));
     }, [showSettings]);
 
     const handleReinstall = async (id) => {
@@ -550,6 +590,68 @@ function App() {
             handleLyricsSearch(defaultQuery, videoId);
         }
     };
+
+    // Runs the backend diagnostic and repairs whatever it finds (ONNX Runtime
+    // pin, NVIDIA libs, torch, corrupt models), then shows the fresh status.
+    const repairGpuStack = async () => {
+        setIsReinstalling('gpu');
+        setStatus("Repairing GPU stack...");
+        try {
+            const result = await invoke('repair_gpu_stack');
+            if (result) setGpuStatus(result);
+        } catch (e) {
+            console.error('GPU repair failed', e);
+            alert('GPU repair failed: ' + e);
+        } finally {
+            setIsReinstalling(null);
+            setStatus("");
+        }
+    };
+
+    const handleGpuChoice = async (enable) => {
+        setGpuChoiceBusy(true);
+        try {
+            await updateConfig({ ...appConfig, gpuEnabled: enable, gpuChoiceMade: true });
+            setShowGpuChoice(false);
+            await invoke('setup_dependencies');
+        } catch (e) {
+            console.error("Setup failed", e);
+            setSetupStatus("Critical Error: " + e.message);
+        } finally {
+            setGpuChoiceBusy(false);
+        }
+    };
+
+    // Installs the CUDA toolkit on demand (from Settings) and unlocks the GPU options.
+    const handleEnableCuda = async () => {
+        setIsReinstalling('gpu');
+        try {
+            await updateConfig({ ...appConfig, gpuEnabled: true, gpuChoiceMade: true });
+            await invoke('reinstall_dependency', { id: 'gpu' });
+            try { setGpuSetupState(await invoke('get_gpu_setup_state')); } catch (e) { console.error(e); }
+            setGpuStatus(null);
+            checkGpuStatus();
+        } catch (e) {
+            console.error("Failed to install CUDA support", e);
+            alert('Failed to install CUDA support: ' + e);
+        } finally {
+            setIsReinstalling(null);
+        }
+    };
+
+    const loadPartyUrl = useCallback(async () => {
+        if (!isTauri) {
+            const host = window.location.hostname;
+            setPartyUrl(`http://${host}:1425`);
+            return;
+        }
+        try {
+            const url = await invoke('get_party_url');
+            setPartyUrl(url);
+        } catch (e) {
+            console.error("Failed to load party url", e);
+        }
+    }, []);
 
     const handleLyricsSearch = async (q, overrideVideoId = null) => {
         setIsSearchingLyrics(true);
@@ -951,7 +1053,7 @@ function App() {
             // from here, but we SHOULD trigger the PresentationView to broadcast its current state.
             if (isPresentation) {
                 console.log("[Party] Client joined. Requesting sync from Master Presentation View...");
-                emit('request_presentation_sync', {});
+                appEmit('request_presentation_sync', {});
                 return;
             }
 
@@ -1744,7 +1846,9 @@ function App() {
 
         } catch (e) {
             console.error(e);
-            if (e === "Processing cancelled by user" || (e.message && e.message.includes("cancelled"))) {
+            const errorText = typeof e === 'string' ? e : (e?.message || "Failed to load song");
+
+            if (errorText.includes("cancelled")) {
                 setStatus("Cancelled execution.");
                 setIsTransitioning(false);
                 setTransitionStage('idle');
@@ -1752,13 +1856,13 @@ function App() {
                 return;
             }
 
-            // ERROR RECOVERY - Redirect to search
+            // Surface the real backend error instead of blaming lyrics.
+            setStatus(`Error: ${errorText.split('\n')[0]}`);
+
+            // ERROR RECOVERY - offer alternative versions of the same song
             if (songTitle) {
-                setStatus(`Lyrics missing for "${songTitle}". Showing other versions...`);
                 setQuery(songTitle);
                 performSearch(songTitle, 20, 0, false);
-            } else {
-                setStatus("Error: " + (e.message || "Failed to load song"));
             }
 
             setIsTransitioning(false);
@@ -1889,7 +1993,101 @@ function App() {
     }, [currentSong, karaokeMode]);
 
 
+    const gpuAvailable = !!gpuSetupState?.nvidiaDetected;
+    const cudaInstalled = !!gpuSetupState?.gpuInstalled;
+    const gpuLocked = !gpuAvailable || !cudaInstalled;
+
     if (!isReady && isTauri) {
+        if (showGpuChoice) {
+            return (
+                <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-950 text-white overflow-hidden p-6">
+                    <div className="absolute inset-0 z-0 opacity-40">
+                        <AuroraBackground />
+                    </div>
+                    <div className="z-10 bg-slate-900/40 p-10 rounded-[2.5rem] border border-white/10 backdrop-blur-3xl flex flex-col items-center text-center shadow-[0_0_100px_rgba(99,102,241,0.15)] max-w-xl w-full">
+                        <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-400 mb-6">
+                            <Cpu size={40} />
+                        </div>
+                        <h1 className="text-4xl font-bold mb-2 tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-primary via-accent to-primary">
+                            KraoQ
+                        </h1>
+                        <p className="text-text-muted text-base mb-6 font-medium">NVIDIA GPU detected</p>
+
+                        <div className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 mb-6">
+                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider mb-1">Graphics Card</p>
+                            <p className="text-white font-bold text-sm">{gpuSetupState?.nvidiaName || 'NVIDIA GPU'}</p>
+                            <p className="text-white/30 text-[10px] leading-tight mt-2">Minimum supported: NVIDIA GPU with compute capability 5.0+ (GeForce GTX 750 Ti / 900-series, 2014) and a recent driver (R570+). Turing (GTX 16-series / RTX 20-series) or newer recommended.</p>
+                        </div>
+
+                        <p className="text-white/50 text-xs leading-relaxed mb-5 text-left">
+                            <span className="text-white font-bold">Enable CUDA acceleration</span> to run vocal separation on your GPU — much faster, but it downloads a full CUDA stack.
+                            <br /><br />
+                            <span className="text-white font-bold">Continue with CPU</span> installs far fewer dependencies, but separation runs on the processor and is significantly slower. You can install CUDA support later from Settings.
+                        </p>
+
+                        <div className="w-full bg-black/30 border border-white/10 rounded-2xl p-4 mb-8 text-left space-y-2">
+                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider mb-1">Estimated downloads</p>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">PyTorch CUDA (torch, torchvision, torchaudio)</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~3.1 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">cuDNN</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~0.6 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">cuBLAS</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~0.5 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">NCCL</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~0.3 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">cuSPARSE</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~0.2 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">cuSOLVER</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~0.15 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">Other CUDA libs (cuRAND, cuPTI, NVRTC, nvJitLink, NVX)</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~0.1 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs gap-3">
+                                <span className="text-white/60">Python modules (audio-separator, onnxruntime-gpu, stable-ts, …)</span>
+                                <span className="text-white/80 font-bold tabular-nums shrink-0">~0.3 GB</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs pt-2 border-t border-white/10">
+                                <span className="text-white font-bold">CUDA total</span>
+                                <span className="text-primary-hover font-black tabular-nums">~5.3 GB</span>
+                            </div>
+                            <p className="text-white/30 text-[10px] leading-tight pt-1">Approximate — actual sizes vary by PyTorch/CUDA version. CPU-only install: ~0.3 GB.</p>
+                        </div>
+
+                        <div className="w-full flex flex-col gap-3">
+                            <button
+                                onClick={() => handleGpuChoice(true)}
+                                disabled={gpuChoiceBusy}
+                                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs font-black uppercase tracking-widest bg-primary text-white hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-wait"
+                            >
+                                {gpuChoiceBusy ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                                Enable CUDA acceleration
+                            </button>
+                            <button
+                                onClick={() => handleGpuChoice(false)}
+                                disabled={gpuChoiceBusy}
+                                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs font-black uppercase tracking-widest bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition-all disabled:opacity-40 disabled:cursor-wait"
+                            >
+                                Continue with CPU
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         const overallProgress = Math.round(
             (setupSteps.reduce((acc, s) => acc + (s.status === 'done' ? 100 : s.progress), 0) / (setupSteps.length * 100)) * 100
         );
@@ -2621,22 +2819,41 @@ function App() {
                                     <h3 className="text-text-muted text-[10px] font-black uppercase tracking-[0.2em] mt-6">Environment</h3>
                                     <div className="space-y-3">
                                         {isTauri && (
-                                            <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
-                                                <div className="flex items-center gap-4">
-                                                    <div className={`p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400`}>
-                                                        <Cpu size={20} />
+                                            <div className="bg-white/5 border border-white/5 rounded-2xl p-4 space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`p-2.5 rounded-xl ${(appConfig.gpuEnabled && cudaInstalled) ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/20'}`}>
+                                                            <Cpu size={20} />
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-white font-bold text-sm">GPU Acceleration</p>
+                                                            <p className="text-white/40 text-[10px] leading-tight max-w-[200px]">
+                                                                {!gpuAvailable
+                                                                    ? 'No supported NVIDIA GPU detected on this machine.'
+                                                                    : !cudaInstalled
+                                                                        ? "CUDA support isn't installed yet."
+                                                                        : 'Uses NVIDIA CUDA to speed up vocal separation significantly.'}
+                                                            </p>
+                                                        </div>
                                                     </div>
-                                                    <div>
-                                                        <p className="text-white font-bold text-sm">GPU Acceleration</p>
-                                                        <p className="text-white/40 text-[10px] leading-tight max-w-[180px]">Uses NVIDIA CUDA to speed up vocal separation significantly.</p>
-                                                    </div>
+                                                    <button
+                                                        disabled={gpuLocked}
+                                                        onClick={() => updateConfig({ ...appConfig, gpuEnabled: !appConfig.gpuEnabled })}
+                                                        className={`w-12 h-6 rounded-full transition-all relative ${gpuLocked ? 'opacity-40 cursor-not-allowed' : ''} ${(appConfig.gpuEnabled && cudaInstalled) ? 'bg-primary' : 'bg-white/10'}`}
+                                                    >
+                                                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${(appConfig.gpuEnabled && cudaInstalled) ? 'left-7' : 'left-1'}`} />
+                                                    </button>
                                                 </div>
-                                                <button
-                                                    onClick={() => updateConfig({ ...appConfig, gpuEnabled: !appConfig.gpuEnabled })}
-                                                    className={`w-12 h-6 rounded-full transition-all relative ${appConfig.gpuEnabled ? 'bg-primary' : 'bg-white/10'}`}
-                                                >
-                                                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.gpuEnabled ? 'left-7' : 'left-1'}`} />
-                                                </button>
+                                                {gpuAvailable && !cudaInstalled && (
+                                                    <button
+                                                        onClick={handleEnableCuda}
+                                                        disabled={isReinstalling !== null}
+                                                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-primary/20 text-primary-hover hover:bg-primary/30 transition-all disabled:opacity-40 disabled:cursor-wait"
+                                                    >
+                                                        {isReinstalling === 'gpu' ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                                                        {isReinstalling === 'gpu' ? 'Installing CUDA support...' : 'Download NVIDIA CUDA support'}
+                                                    </button>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -2648,32 +2865,51 @@ function App() {
                                         <div className="flex flex-col gap-1.5">
                                             <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Instrumental Preset</p>
                                             <select
-                                                value={appConfig.instrumentalPreset || "karaoke"}
+                                                value={appConfig.instrumentalPreset || "instrumental_clean"}
                                                 onChange={(e) => updateConfig({ ...appConfig, instrumentalPreset: e.target.value })}
                                                 className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
                                             >
-                                                <option value="instrumental_clean" className="bg-slate-900">Instrumental Clean (Best, minimal bleed)</option>
-                                                <option value="instrumental_full" className="bg-slate-900">Instrumental Full (Max preservation)</option>
-                                                <option value="instrumental_balanced" className="bg-slate-900">Instrumental Balanced</option>
-                                                <option value="instrumental_low_resource" className="bg-slate-900">Instrumental Low Resource</option>
-                                                <option value="karaoke" className="bg-slate-900">Karaoke (Standard)</option>
-                                                <option value="none" className="bg-slate-900">UVR-MDX-NET Model Only (Force)</option>
+                                                <option value="none" className="bg-slate-900">UVR-MDX-NET Model Only (fastest · basic quality)</option>
+                                                <option value="instrumental_low_resource" className="bg-slate-900">Instrumental Low Resource (fast · lower quality)</option>
+                                                <option value="instrumental_clean" className="bg-slate-900">Instrumental Clean (slow · best quality, minimal bleed)</option>
+                                                <option value="instrumental_balanced" className="bg-slate-900">Instrumental Balanced (slow · balanced)</option>
+                                                <option value="instrumental_full" className="bg-slate-900">Instrumental Full (slow · max preservation)</option>
+                                                <option value="karaoke" className="bg-slate-900">Karaoke (slowest · 3-model ensemble)</option>
                                             </select>
                                         </div>
                                         <div className="flex flex-col gap-1.5">
-                                            <p className="text-[9px] font-black text-text-muted uppercase tracking-wider">Vocal Preset</p>
+                                            <p className={`text-[9px] font-black uppercase tracking-wider ${appConfig.isolateVocals === false ? 'text-white/20' : 'text-text-muted'}`}>Vocal Preset</p>
                                             <select
                                                 value={appConfig.vocalPreset || "vocal_clean"}
                                                 onChange={(e) => updateConfig({ ...appConfig, vocalPreset: e.target.value })}
-                                                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                                disabled={appConfig.isolateVocals === false}
+                                                className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] focus:outline-none transition-all appearance-none ${appConfig.isolateVocals === false ? 'text-white/30 cursor-not-allowed opacity-60' : 'text-white/80 focus:border-primary/50'}`}
                                             >
-                                                <option value="vocal_clean" className="bg-slate-900">Vocal Clean (Minimal bleed)</option>
-                                                <option value="vocal_balanced" className="bg-slate-900">Vocal Balanced (Best quality)</option>
-                                                <option value="vocal_full" className="bg-slate-900">Vocal Full (Max capture)</option>
-                                                <option value="vocal_rvc" className="bg-slate-900">Vocal RVC (Optimize Training)</option>
-                                                <option value="none" className="bg-slate-900">UVR-MDX-NET Model Only (Force)</option>
+                                                <option value="vocal_clean" className="bg-slate-900">Vocal Clean (slow · minimal bleed)</option>
+                                                <option value="vocal_balanced" className="bg-slate-900">Vocal Balanced (slow · best quality)</option>
+                                                <option value="vocal_full" className="bg-slate-900">Vocal Full (slow · max capture)</option>
+                                                <option value="vocal_rvc" className="bg-slate-900">Vocal RVC (slow · optimized for training)</option>
+                                                <option value="none" className="bg-slate-900">UVR-MDX-NET Model Only (fastest · basic quality)</option>
                                             </select>
                                         </div>
+                                    </div>
+
+                                    <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                                        <div className="flex items-center gap-4">
+                                            <div className={`p-2.5 rounded-xl ${appConfig.isolateVocals !== false ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/20'}`}>
+                                                <Mic2 size={20} />
+                                            </div>
+                                            <div>
+                                                <p className="text-white font-bold text-sm">Isolate Vocals</p>
+                                                <p className="text-white/40 text-[10px] leading-tight max-w-[220px]">Separate a voice-only stem to sync lyrics. Turning this off saves time and disk, but lyrics will be synced against the full track (less precise).</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => updateConfig({ ...appConfig, isolateVocals: appConfig.isolateVocals === false })}
+                                            className={`w-12 h-6 rounded-full transition-all relative shrink-0 ${appConfig.isolateVocals !== false ? 'bg-primary' : 'bg-white/10'}`}
+                                        >
+                                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-all ${appConfig.isolateVocals !== false ? 'left-7' : 'left-1'}`} />
+                                        </button>
                                     </div>
 
                                     <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between">
@@ -2772,7 +3008,7 @@ function App() {
                                                         {isCheckingGpu ? (
                                                             <p className="text-white/30 text-[10px]">Checking GPU environment...</p>
                                                         ) : gpuStatus ? (
-                                                            <div className="space-y-1.5">
+                                                            <div className="space-y-2">
                                                                 <p className="text-white/50 text-[10px] leading-relaxed">{gpuStatus.message}</p>
                                                                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                                                                     <span className="text-[9px] text-white/30">
@@ -2783,9 +3019,32 @@ function App() {
                                                                             <span className="text-white/50 font-semibold">CUDA:</span> {gpuStatus.torchCudaVersion}
                                                                         </span>
                                                                     )}
+                                                                    {gpuStatus.onnxRuntimeVersion && (
+                                                                        <span className="text-[9px] text-white/30">
+                                                                            <span className="text-white/50 font-semibold">ONNX Runtime:</span> {gpuStatus.onnxRuntimeVersion}
+                                                                        </span>
+                                                                    )}
                                                                     {gpuStatus.cudaDeviceName && (
                                                                         <span className="text-[9px] text-white/30">
                                                                             <span className="text-white/50 font-semibold">GPU:</span> {gpuStatus.cudaDeviceName}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="flex flex-wrap gap-1.5 mt-1">
+                                                                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${gpuStatus.torchCudaAvailable ? 'bg-emerald-500/15 text-emerald-400/80' : 'bg-red-500/15 text-red-400/80'}`}>
+                                                                        Torch CUDA {gpuStatus.torchCudaAvailable ? 'OK' : 'OFF'}
+                                                                    </span>
+                                                                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${gpuStatus.onnxCudaActive ? 'bg-emerald-500/15 text-emerald-400/80' : 'bg-red-500/15 text-red-400/80'}`}>
+                                                                        ONNX CUDA {gpuStatus.onnxCudaActive ? 'OK' : 'OFF'}
+                                                                    </span>
+                                                                    {gpuStatus.torchCudaMajor && gpuStatus.onnxCudaMajor && (
+                                                                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${gpuStatus.torchCudaMajor === gpuStatus.onnxCudaMajor ? 'bg-white/5 text-white/40' : 'bg-amber-500/15 text-amber-400/80'}`}>
+                                                                            CUDA {gpuStatus.torchCudaMajor} vs {gpuStatus.onnxCudaMajor}
+                                                                        </span>
+                                                                    )}
+                                                                    {gpuStatus.alignmentOk !== undefined && (
+                                                                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${gpuStatus.alignmentOk ? 'bg-emerald-500/15 text-emerald-400/80' : 'bg-amber-500/15 text-amber-400/80'}`}>
+                                                                            Word Sync {gpuStatus.alignmentOk ? 'OK' : 'OFF'}
                                                                         </span>
                                                                     )}
                                                                 </div>
@@ -2797,6 +3056,18 @@ function App() {
                                                                                     p.includes('Dml') ? 'bg-purple-500/15 text-purple-400/80' :
                                                                                         'bg-white/5 text-white/30'
                                                                                 }`}>{p.replace('ExecutionProvider', '')}</span>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                                {gpuStatus.issues?.length > 0 && (
+                                                                    <div className="space-y-1.5 mt-2">
+                                                                        {gpuStatus.issues.map((issue) => (
+                                                                            <div key={issue.id} className="flex items-start gap-2">
+                                                                                <AlertCircle size={11} className={`shrink-0 mt-0.5 ${issue.severity === 'error' ? 'text-red-400' : 'text-amber-400'}`} />
+                                                                                <p className="text-[9px] leading-tight text-white/50">
+                                                                                    <span className="text-white/80 font-semibold">{issue.title}.</span> {issue.detail}
+                                                                                </p>
+                                                                            </div>
                                                                         ))}
                                                                     </div>
                                                                 )}
@@ -2814,6 +3085,18 @@ function App() {
                                                     </button>
                                                 )}
                                             </div>
+                                            {!isCheckingGpu && gpuStatus?.issues?.length > 0 && (gpuAvailable || gpuStatus.issues.some(i => i.fixId === 'torchaudio')) && (
+                                                <button
+                                                    onClick={repairGpuStack}
+                                                    disabled={isReinstalling !== null}
+                                                    className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-all disabled:opacity-40 disabled:cursor-wait"
+                                                >
+                                                    {isReinstalling === 'gpu' ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
+                                                    {isReinstalling === 'gpu'
+                                                        ? 'Repairing...'
+                                                        : (gpuStatus.issues.every(i => i.fixId === 'torchaudio') ? 'Fix Word-by-Word Lyrics' : 'Repair GPU Stack')}
+                                                </button>
+                                            )}
                                         </div>
                                     )}
                                 </section>
@@ -2840,7 +3123,7 @@ function App() {
                                                             <p className="text-white/30 text-[10px]">{dep.desc}</p>
                                                         </div>
                                                         <button
-                                                            disabled={isReinstalling !== null}
+                                                            disabled={isReinstalling !== null || (dep.id === 'gpu' && gpuLocked)}
                                                             onClick={() => handleReinstall(dep.id)}
                                                             className={`
                                                                 flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all
@@ -2849,8 +3132,8 @@ function App() {
                                                                     : 'bg-white/5 text-white/40 hover:bg-white/20 hover:text-white'
                                                                 }
                                                                 ${isReinstalling !== null && isReinstalling !== dep.id ? 'opacity-30' : ''}
+                                                                ${dep.id === 'gpu' && gpuLocked ? 'opacity-30 cursor-not-allowed' : ''}
                                                             `}
-                                                            Lark
                                                         >
                                                             {isReinstalling === dep.id ? (
                                                                 <Loader2 size={12} className="animate-spin" />
@@ -2868,7 +3151,8 @@ function App() {
                                                                 <select
                                                                     value={appConfig[dep.key]}
                                                                     onChange={(e) => updateConfig({ ...appConfig, [dep.key]: e.target.value })}
-                                                                    className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                                                    disabled={dep.id === 'gpu' && gpuLocked}
+                                                                    className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] focus:outline-none transition-all appearance-none ${dep.id === 'gpu' && gpuLocked ? 'text-white/30 cursor-not-allowed opacity-60' : 'text-white/80 focus:border-primary/50'}`}
                                                                 >
                                                                     {AVAILABLE_VERSIONS[dep.key].map(v => (
                                                                         <option key={v} value={v} className="bg-slate-900">{v}</option>
@@ -2881,7 +3165,8 @@ function App() {
                                                                     <select
                                                                         value={appConfig.cudaVersion}
                                                                         onChange={(e) => updateConfig({ ...appConfig, cudaVersion: e.target.value })}
-                                                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] text-white/80 focus:outline-none focus:border-primary/50 transition-all appearance-none"
+                                                                        disabled={gpuLocked}
+                                                                        className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[11px] focus:outline-none transition-all appearance-none ${gpuLocked ? 'text-white/30 cursor-not-allowed opacity-60' : 'text-white/80 focus:border-primary/50'}`}
                                                                     >
                                                                         {AVAILABLE_VERSIONS.cudaVersion.map(v => (
                                                                             <option key={v} value={v} className="bg-slate-900">{v}</option>

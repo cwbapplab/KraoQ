@@ -2,18 +2,11 @@ mod db;
 mod setup;
 mod server;
 
-
-
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State, Emitter};
-use tauri_plugin_fs::FsExt;
+use tauri::{AppHandle, Manager, Emitter};
 use serde::{Serialize, Deserialize};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot;
@@ -45,6 +38,10 @@ pub struct AppConfig {
     pub instrumental_preset: String,
     #[serde(default = "default_vocal_preset")]
     pub vocal_preset: String,
+    #[serde(default = "default_isolate_vocals")]
+    pub isolate_vocals: bool,
+    #[serde(default)]
+    pub gpu_choice_made: bool,
     #[serde(default)]
     pub active_plugin_path: String,
     #[serde(default)]
@@ -65,20 +62,23 @@ pub struct AppConfig {
     pub username: String,
 }
 
-fn default_instrumental_preset() -> String { "karaoke".to_string() }
+fn default_instrumental_preset() -> String { "instrumental_clean".to_string() }
 fn default_vocal_preset() -> String { "vocal_clean".to_string() }
 fn default_app_mode() -> String { "standalone".to_string() }
+fn default_isolate_vocals() -> bool { true }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self { 
             gpu_enabled: true,
             python_version: "3.11.8".to_string(),
-            torch_version: "2.5.1".to_string(),
-            cuda_version: "12.1".to_string(),
+            torch_version: "2.7.1".to_string(),
+            cuda_version: "12.8".to_string(),
             ffmpeg_version: "7.1".to_string(),
             instrumental_preset: default_instrumental_preset(),
             vocal_preset: default_vocal_preset(),
+            isolate_vocals: default_isolate_vocals(),
+            gpu_choice_made: false,
             active_plugin_path: "".to_string(),
             raw_library_folder: "".to_string(),
             relay_url: "".to_string(),
@@ -132,6 +132,16 @@ pub(crate) fn get_app_config_internal(app: AppHandle) -> AppConfig {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct GpuIssue {
+    pub id: String,
+    pub severity: String,
+    pub title: String,
+    pub detail: String,
+    pub fix_id: String,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct GpuStatus {
     pub torch_version: String,
     pub torch_cuda_available: bool,
@@ -140,6 +150,17 @@ pub struct GpuStatus {
     pub cuda_device_name: String,
     pub status: String, // "ok", "degraded", "unavailable"
     pub message: String,
+    // Extended diagnostic detail (see python/check_gpu.py)
+    pub onnx_runtime_version: String,
+    pub onnx_cuda_active: bool,
+    pub onnx_missing_dll: Option<String>,
+    pub torch_cuda_major: Option<String>,
+    pub onnx_cuda_major: Option<String>,
+    pub invalid_models: Vec<String>,
+    // Word-level lyric alignment (stable-ts/torchaudio) capability.
+    pub alignment_ok: bool,
+    pub torchaudio_version: String,
+    pub issues: Vec<GpuIssue>,
 }
 
 #[tauri::command]
@@ -147,46 +168,39 @@ async fn check_gpu_status(app: AppHandle) -> Result<GpuStatus, String> {
     check_gpu_status_internal(app).await
 }
 
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuSetupState {
+    pub nvidia_detected: bool,
+    pub nvidia_name: String,
+    pub gpu_installed: bool,
+}
+
+#[tauri::command]
+async fn get_gpu_setup_state(app: AppHandle) -> GpuSetupState {
+    let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let gpu_installed = app_dir.join(".gpu_setup_done").exists();
+    let (nvidia_detected, nvidia_name) = setup::detect_nvidia_gpu().await;
+    GpuSetupState { nvidia_detected, nvidia_name, gpu_installed }
+}
+
 pub(crate) async fn check_gpu_status_internal(app: AppHandle) -> Result<GpuStatus, String> {
     let python_exe = get_python_exe(&app);
-    let script = r#"
-import json, sys
-try:
-    import torch
-    torch_version = torch.__version__
-    cuda_available = torch.cuda.is_available()
-    cuda_version = str(torch.version.cuda) if torch.version.cuda else ""
-    device_name = torch.cuda.get_device_name(0) if cuda_available else ""
-except Exception as e:
-    torch_version = str(e)
-    cuda_available = False
-    cuda_version = ""
-    device_name = ""
+    let state = app.state::<AppState>();
+    let script = state.python_dir.join("check_gpu.py");
+    let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-try:
-    import onnxruntime as ort
-    providers = ort.get_available_providers()
-except Exception:
-    providers = []
-
-print(json.dumps({
-    "torch_version": torch_version,
-    "cuda_available": cuda_available,
-    "cuda_version": cuda_version,
-    "device_name": device_name,
-    "providers": providers
-}))
-"#;
     let output = create_command(&python_exe)
-        .arg("-c")
-        .arg(script)
+        .arg(&script)
+        .env("APP_DATA_DIR", app_dir.to_string_lossy().to_string())
+        .env("APP_MODELS_DIR", app_dir.join("models").to_string_lossy().to_string())
         .output()
         .await
-        .map_err(|e| format!("Failed to check GPU: {}", e))?;
+        .map_err(|e| format!("Failed to run GPU diagnostic: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
-    // Parse the last valid JSON line from stdout
+
+    // The diagnostic prints a single JSON object; pick the last parseable line.
     let mut parsed: Option<serde_json::Value> = None;
     for line in stdout.lines() {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
@@ -194,44 +208,95 @@ print(json.dumps({
         }
     }
 
-    let json = parsed.ok_or_else(|| format!("Invalid GPU check output: {}", stdout))?;
+    let json = parsed.ok_or_else(|| {
+        format!(
+            "Invalid GPU diagnostic output: {} {}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
 
-    let torch_version = json["torch_version"].as_str().unwrap_or("unknown").to_string();
-    let cuda_available = json["cuda_available"].as_bool().unwrap_or(false);
-    let cuda_version = json["cuda_version"].as_str().unwrap_or("").to_string();
-    let device_name = json["device_name"].as_str().unwrap_or("").to_string();
-    let providers: Vec<String> = json["providers"]
+    Ok(gpu_status_from_json(&json))
+}
+
+fn gpu_status_from_json(json: &serde_json::Value) -> GpuStatus {
+    let torch = &json["torch"];
+    let onnx = &json["onnx"];
+    let compat = &json["compat"];
+
+    let torch_version = torch["version"].as_str().unwrap_or("unknown").to_string();
+    let torch_cuda_available = torch["available"].as_bool().unwrap_or(false);
+    let torch_cuda_version = torch["cuda_build"].as_str().unwrap_or("").to_string();
+    let cuda_device_name = torch["device"].as_str().unwrap_or("").to_string();
+    let kernel_ok = torch["kernel_ok"].as_bool().unwrap_or(false);
+
+    let onnx_providers: Vec<String> = onnx["available_providers"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let onnx_runtime_version = onnx["package_version"].as_str().unwrap_or("").to_string();
+    let onnx_cuda_active = onnx["cuda_active"].as_bool().unwrap_or(false);
+    let onnx_missing_dll = onnx["missing_dll"].as_str().map(String::from);
+
+    let invalid_models: Vec<String> = json["invalid_models"]
         .as_array()
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
 
-    let has_cuda_provider = providers.iter().any(|p| p.contains("CUDA"));
+    let alignment = &json["alignment"];
+    // Default to `true` when the probe is missing so we never raise a false alarm.
+    let alignment_ok = alignment["ok"].as_bool().unwrap_or(true);
+    let torchaudio_version = alignment["torchaudio_version"].as_str().unwrap_or("").to_string();
 
-    let (status, message) = if cuda_available && has_cuda_provider {
-        ("ok".to_string(), format!("GPU fully active — {}", device_name))
-    } else if has_cuda_provider && !cuda_available {
-        ("degraded".to_string(), "ONNX has CUDA but PyTorch is CPU-only. Reinstall GPU Toolkit.".to_string())
-    } else if cuda_available && !has_cuda_provider {
-        ("degraded".to_string(), "PyTorch has CUDA but ONNX Runtime is missing GPU support. Reinstall GPU Toolkit.".to_string())
+    let issues: Vec<GpuIssue> = json["issues"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|i| GpuIssue {
+                    id: i["id"].as_str().unwrap_or("").to_string(),
+                    severity: i["severity"].as_str().unwrap_or("warning").to_string(),
+                    title: i["title"].as_str().unwrap_or("").to_string(),
+                    detail: i["detail"].as_str().unwrap_or("").to_string(),
+                    fix_id: i["fix_id"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let status = json["status"].as_str().unwrap_or("unavailable").to_string();
+
+    let message = if !issues.is_empty() {
+        issues
+            .iter()
+            .map(|i| format!("{}: {}", i.title, i.detail))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    } else if kernel_ok && onnx_cuda_active {
+        format!("GPU fully active — {}", cuda_device_name)
+    } else if !torch_cuda_available {
+        "No GPU acceleration detected. Install the GPU Toolkit for faster processing.".to_string()
     } else {
-        ("unavailable".to_string(), "No GPU acceleration detected. Install GPU Toolkit for faster processing.".to_string())
+        "GPU status unknown".to_string()
     };
 
-    Ok(GpuStatus {
+    GpuStatus {
         torch_version,
-        torch_cuda_available: cuda_available,
-        torch_cuda_version: cuda_version,
-        onnx_providers: providers,
-        cuda_device_name: device_name,
+        torch_cuda_available,
+        torch_cuda_version,
+        onnx_providers,
+        cuda_device_name,
         status,
         message,
-    })
-}
-
-#[derive(Serialize)]
-struct CommandResult<T> {
-    data: Option<T>,
-    error: Option<String>,
+        onnx_runtime_version,
+        onnx_cuda_active,
+        onnx_missing_dll,
+        torch_cuda_major: compat["torch_cuda_major"].as_str().map(String::from),
+        onnx_cuda_major: compat["onnx_cuda_major"].as_str().map(String::from),
+        invalid_models,
+        alignment_ok,
+        torchaudio_version,
+        issues,
+    }
 }
 
 pub(crate) fn get_python_exe(app: &AppHandle) -> PathBuf {
@@ -248,12 +313,6 @@ pub(crate) fn create_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::pr
     }
     cmd
 }
-
-pub(crate) fn get_python_script_path(app: &AppHandle, script_name: &str) -> PathBuf {
-    let state: State<AppState> = app.state();
-    state.python_dir.join(script_name)
-}
-
 
 #[tauri::command]
 async fn search(query: String, app: AppHandle) -> Result<String, String> {
@@ -327,15 +386,6 @@ pub(crate) async fn suggestions_internal(query: String, app: AppHandle) -> Resul
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
-}
-
-#[derive(Deserialize)]
-struct ProcessResult {
-    instrumental_url: String,
-    title: String,
-    artist: String,
-    lrc: String,
-    segments: Vec<Segment>
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -472,51 +522,94 @@ pub(crate) async fn process_yt_internal(video_id: String, app: AppHandle) -> Res
         let state = app.state::<AppState>();
         
         // Check Cache
-        {
+        let cached_song = {
             let conn = state.db_conn.lock().unwrap();
-            if let Ok(Some(cached)) = db::get_song(&conn, &video_id) {
-                if !cached.missing_lyrics && std::path::Path::new(&cached.instrumental_path).exists() {
-                    let mut final_lrc_path = cached.lrc_path.clone();
-                    if final_lrc_path.ends_with(".lrc") {
-                        let cand1 = format!("{}.elrc", final_lrc_path);
-                        let cand2 = final_lrc_path.replace(".lrc", ".elrc");
-                        if std::path::Path::new(&cand1).exists() {
-                            final_lrc_path = cand1;
-                        } else if std::path::Path::new(&cand2).exists() {
-                            final_lrc_path = cand2;
-                        }
-                    }
-                    if let Ok(lrc_content) = std::fs::read_to_string(&final_lrc_path) {
-                        let mut vocals_path_found = String::new();
-                        if let Some(parent) = std::path::Path::new(&cached.instrumental_path).parent() {
-                            if let Some(inst_file) = std::path::Path::new(&cached.instrumental_path).file_name().and_then(|f| f.to_str()) {
-                                let mut voc_file = inst_file.to_string();
-                                if let Some(idx) = voc_file.find("_(Instrumental)_") {
-                                    voc_file = format!("{}.mp3", &voc_file[..idx]);
-                                } else if let Some(idx) = voc_file.find("_(Instrumental).mp3") {
-                                    voc_file = format!("{}.mp3", &voc_file[..idx]);
-                                }
-                                let candidate = parent.join(&voc_file);
-                                if candidate.exists() {
-                                    vocals_path_found = candidate.to_string_lossy().to_string();
-                                }
-                            }
-                        }
+            db::get_song(&conn, &video_id).ok().flatten()
+        };
 
-                        let segments = parse_lrc(&lrc_content);
-                        let res = serde_json::json!({
-                            "message": "Processing complete (Cached)",
-                            "data": {
-                                "segments": segments,
-                                "lrc": lrc_content,
-                                "instrumentalUrl": cached.instrumental_path,
-                                "vocalsUrl": vocals_path_found,
-                                "title": cached.title,
-                                "artist": cached.artist
-                            }
-                        });
-                        return Ok(res.to_string());
+        if let Some(cached) = cached_song {
+            if !cached.missing_lyrics && std::path::Path::new(&cached.instrumental_path).exists() {
+                // Locate the isolated vocals stem (alignment works best against it).
+                let mut vocals_path_found = String::new();
+                if let Some(parent) = std::path::Path::new(&cached.instrumental_path).parent() {
+                    if let Some(inst_file) = std::path::Path::new(&cached.instrumental_path).file_name().and_then(|f| f.to_str()) {
+                        let mut voc_file = inst_file.to_string();
+                        if let Some(idx) = voc_file.find("_(Instrumental)_") {
+                            voc_file = format!("{}.mp3", &voc_file[..idx]);
+                        } else if let Some(idx) = voc_file.find("_(Instrumental).mp3") {
+                            voc_file = format!("{}.mp3", &voc_file[..idx]);
+                        }
+                        let candidate = parent.join(&voc_file);
+                        if candidate.exists() {
+                            vocals_path_found = candidate.to_string_lossy().to_string();
+                        }
                     }
+                }
+
+                // Prefer the enhanced (word-level) lyrics next to the base .lrc.
+                let mut final_lrc_path = cached.lrc_path.clone();
+                if final_lrc_path.ends_with(".lrc") {
+                    let cand1 = format!("{}.elrc", final_lrc_path);
+                    let cand2 = final_lrc_path.replace(".lrc", ".elrc");
+                    if std::path::Path::new(&cand1).exists() {
+                        final_lrc_path = cand1;
+                    } else if std::path::Path::new(&cand2).exists() {
+                        final_lrc_path = cand2;
+                    }
+                }
+
+                // Cached without word-level timings (processed before alignment existed, or
+                // a previous run failed): generate the ELRC now so lyrics highlight word by
+                // word instead of silently falling back to plain line-level text.
+                if final_lrc_path.ends_with(".lrc") {
+                    emit("Adding word-level lyric timings...");
+                    let align_script = state.python_dir.join("align_elrc.py");
+                    let elrc_path = format!("{}.elrc", final_lrc_path);
+                    let align_audio = if vocals_path_found.is_empty() {
+                        cached.instrumental_path.clone()
+                    } else {
+                        vocals_path_found.clone()
+                    };
+
+                    let align_output = create_command(&get_python_exe(&app))
+                        .arg(&align_script)
+                        .arg(&align_audio)
+                        .arg(&final_lrc_path)
+                        .arg(&elrc_path)
+                        .output()
+                        .await;
+
+                    match align_output {
+                        Ok(out) if out.status.success() && std::path::Path::new(&elrc_path).exists() => {
+                            final_lrc_path = elrc_path.clone();
+                            // Persist so subsequent plays skip alignment.
+                            let mut updated = cached.clone();
+                            updated.lrc_path = elrc_path;
+                            let conn = state.db_conn.lock().unwrap();
+                            let _ = db::insert_song(&conn, &updated);
+                        }
+                        Ok(out) => println!(
+                            "Word alignment failed (cached): {}", 
+                            String::from_utf8_lossy(&out.stderr)
+                        ),
+                        Err(e) => println!("Word alignment failed to start (cached): {}", e),
+                    }
+                }
+
+                if let Ok(lrc_content) = std::fs::read_to_string(&final_lrc_path) {
+                    let segments = parse_lrc(&lrc_content);
+                    let res = serde_json::json!({
+                        "message": "Processing complete (Cached)",
+                        "data": {
+                            "segments": segments,
+                            "lrc": lrc_content,
+                            "instrumentalUrl": cached.instrumental_path,
+                            "vocalsUrl": vocals_path_found,
+                            "title": cached.title,
+                            "artist": cached.artist
+                        }
+                    });
+                    return Ok(res.to_string());
                 }
             }
         }
@@ -594,6 +687,7 @@ pub(crate) async fn process_yt_internal(video_id: String, app: AppHandle) -> Res
             .env("GPU_ENABLED", gpu_env)
             .env("INST_PRESET", &config.instrumental_preset)
             .env("VOC_PRESET", &config.vocal_preset)
+            .env("ISOLATE_VOCALS", if config.isolate_vocals { "1" } else { "0" })
             .output()
             .await
             .map_err(|e| format!("Separation failed execution: {}", e))?;
@@ -711,9 +805,10 @@ async fn reinstall_dependency(id: String, app: AppHandle) -> Result<(), String> 
     let python_exe = get_python_exe(&app);
     let bin_dir = app_dir.join("bin");
     let models_dir = app_dir.join("models");
-    let req_path = state.python_dir.join("requirements.txt");
 
     let config = get_config_internal(&app);
+    let req_file = if config.gpu_enabled { "requirements-gpu.txt" } else { "requirements.txt" };
+    let req_path = state.python_dir.join(req_file);
 
     match id.as_str() {
         "python" => setup::install_python_runtime(&app, &app_dir, &python_exe, &config.python_version, 1).await?,
@@ -721,14 +816,73 @@ async fn reinstall_dependency(id: String, app: AppHandle) -> Result<(), String> 
         "models" => setup::install_ai_models(&app, &models_dir, 3).await?,
         "pip" => {
             setup::install_pip_modules(&app, &python_exe, &req_path, 4).await?;
-            let gpu_done_file = app_dir.join(".gpu_setup_done");
-            let _ = std::fs::remove_file(&gpu_done_file);
-            setup::install_gpu_acceleration(&app, &python_exe, &config.torch_version, &config.cuda_version, 5).await?;
+            if config.gpu_enabled {
+                let gpu_done_file = app_dir.join(".gpu_setup_done");
+                let _ = std::fs::remove_file(&gpu_done_file);
+                setup::install_gpu_acceleration(&app, &python_exe, &config.torch_version, &config.cuda_version, 5).await?;
+            }
         },
         "gpu" => setup::install_gpu_acceleration(&app, &python_exe, &config.torch_version, &config.cuda_version, 5).await?,
         _ => return Err("Unknown dependency ID".to_string()),
     }
     Ok(())
+}
+
+/// Runs the GPU diagnostic and repairs whatever it finds, returning the fresh
+/// status. Each fix is driven by the `fixId` on the reported issues.
+#[tauri::command]
+async fn repair_gpu_stack(app: AppHandle) -> Result<GpuStatus, String> {
+    let state = app.state::<AppState>();
+    let app_dir = state.app_data_dir.clone();
+    let python_exe = get_python_exe(&app);
+    let models_dir = app_dir.join("models");
+    let config = get_config_internal(&app);
+
+    let before = check_gpu_status_internal(app.clone()).await?;
+    let fix_ids: Vec<String> = before.issues.iter().map(|i| i.fix_id.clone()).collect();
+
+    // Target the CUDA major PyTorch is actually built for.
+    let torch_major = before
+        .torch_cuda_version
+        .split('.')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| config.cuda_version.split('.').next().unwrap_or("12").to_string());
+
+    if fix_ids.iter().any(|f| f.as_str() == "onnxruntime") {
+        setup::install_onnxruntime(&app, &python_exe, &torch_major, 4).await?;
+    }
+
+    // Reinstall the PyTorch stack when torch, its NVIDIA libs, or torchaudio (used
+    // for word-level lyric alignment) are broken. torchaudio is pinned to torch so
+    // the two stay ABI-compatible; the CUDA index is only used when GPU mode is on.
+    let needs_torch_stack = fix_ids.iter().any(|f| matches!(f.as_str(), "torch" | "nvidia_libs" | "torchaudio"));
+    if needs_torch_stack {
+        let cuda = if config.gpu_enabled { Some(config.cuda_version.clone()) } else { None };
+        setup::install_torch_stack(&app, &python_exe, &config.torch_version, cuda.as_deref(), 5).await?;
+        if config.gpu_enabled {
+            // Re-apply the matching ONNX Runtime in case torch pulled a new CUDA major.
+            setup::install_onnxruntime(&app, &python_exe, &torch_major, 4).await?;
+        }
+    }
+
+    if fix_ids.iter().any(|f| f.as_str() == "models") {
+        for name in &before.invalid_models {
+            let path = models_dir.join(name);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+
+    // Dependency state may have changed — drop the cached markers.
+    if !fix_ids.is_empty() {
+        let _ = std::fs::remove_file(app_dir.join(".pip_setup_done"));
+        let _ = std::fs::remove_file(app_dir.join(".gpu_setup_done"));
+    }
+
+    check_gpu_status_internal(app).await
 }
 
 
@@ -1016,6 +1170,9 @@ pub fn run() {
             setup::setup_dependencies,
             set_config,
             get_app_config,
+            get_gpu_setup_state,
+            check_gpu_status,
+            repair_gpu_stack,
             reinstall_dependency,
             server::get_local_ip_addr,
             server::start_party_mode,
