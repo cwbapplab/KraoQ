@@ -9,6 +9,9 @@ It is a [Tauri](https://tauri.app) desktop application: a React front end, a Rus
 
 ---
 
+### This Project is FREE and Open-Source, feel free to support if you want
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/V3Q227QNVD)
+
 ## Features
 
 - **Song search** — search YouTube Music with autocomplete, and see which results have lyrics available.
