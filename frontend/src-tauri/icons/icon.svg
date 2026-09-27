@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="45%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.28" cy="0.18" r="0.9">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="caps"><rect x="392" y="210" width="240" height="380" rx="120"/></clipPath>
+  </defs>
+  <rect x="30" y="30" width="964" height="964" rx="228" fill="url(#g)"/>
+  <rect x="30" y="30" width="964" height="964" rx="228" fill="url(#sheen)"/>
+  <rect x="41" y="41" width="942" height="942" rx="217" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="4"/>
+  <g stroke="#ffffff" stroke-width="46" stroke-linecap="round" fill="none">
+    <path d="M336 380 V 442 a 176 176 0 0 0 352 0 V 380"/>
+    <path d="M512 590 V 748"/>
+    <path d="M400 756 H 624"/>
+  </g>
+  <rect x="392" y="210" width="240" height="380" rx="120" fill="#ffffff"/>
+  <g clip-path="url(#caps)">
+    <rect x="416" y="325" width="24" height="150" rx="12" fill="url(#g)"/>
+    <rect x="456" y="275" width="24" height="250" rx="12" fill="url(#g)"/>
+    <rect x="500" y="230" width="24" height="340" rx="12" fill="url(#g)"/>
+    <rect x="544" y="275" width="24" height="250" rx="12" fill="url(#g)"/>
+    <rect x="584" y="325" width="24" height="150" rx="12" fill="url(#g)"/>
+  </g>
+</svg>
