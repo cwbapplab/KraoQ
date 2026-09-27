@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use futures_util::{StreamExt, SinkExt};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tower_http::cors::CorsLayer;
 use std::net::SocketAddr;
 
@@ -340,6 +340,42 @@ pub async fn stop_party_mode(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// Serves the presentation UI. The frontend is embedded into the executable at
+// build time, so it must be read through the asset resolver rather than from a
+// `dist` folder on disk (which does not exist in a packaged build). In dev the
+// resolver transparently falls back to reading the frontend dist directory.
+async fn serve_asset(
+    axum::extract::State(app): axum::extract::State<AppHandle>,
+    uri: axum::http::Uri,
+) -> axum::response::Response {
+    let resolver = app.asset_resolver();
+
+    let mut path = uri.path().trim_start_matches('/').to_string();
+    if path.is_empty() {
+        path = "index.html".to_string();
+    }
+
+    let asset = resolver
+        .get(path)
+        .or_else(|| resolver.get("index.html".to_string()));
+
+    match asset {
+        Some(asset) => {
+            let mut builder = axum::response::Response::builder()
+                .status(axum::http::StatusCode::OK)
+                .header(axum::http::header::CONTENT_TYPE, asset.mime_type.clone());
+            if let Some(csp) = &asset.csp_header {
+                builder = builder.header("Content-Security-Policy", csp);
+            }
+            builder.body(axum::body::Body::from(asset.bytes)).unwrap()
+        }
+        None => axum::response::Response::builder()
+            .status(axum::http::StatusCode::NOT_FOUND)
+            .body(axum::body::Body::from("Presentation UI not found"))
+            .unwrap(),
+    }
+}
+
 #[tauri::command]
 pub async fn start_http_server(app: tauri::AppHandle) -> Result<String, String> {
     let state = app.state::<crate::AppState>();
@@ -355,48 +391,7 @@ pub async fn start_http_server(app: tauri::AppHandle) -> Result<String, String> 
     let uploads_dir = state.uploads_dir.clone();
     let separate_dir = state.app_data_dir.join("separate");
     
-    // In production, assets are in the resource directory
-    let resource_dir = app.path().resource_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let dist_dir_prod = resource_dir.join("dist");
-
-    // Fallback search logic
-    let final_dist_dir = if dist_dir_prod.exists() {
-        dist_dir_prod
-    } else {
-        // Try searching standard development paths
-        let mut p = std::env::current_dir().unwrap_or_default();
-        let mut found = false;
-        
-        // Check current, current/frontend, current/..
-        for base in [p.clone(), p.join("frontend"), p.parent().unwrap_or(&p).to_path_buf()] {
-            let check = base.join("dist");
-            if check.join("index.html").exists() {
-                p = check;
-                found = true;
-                break;
-            }
-        }
-        
-        if !found {
-            // Last ditch effort: search up from the executable
-            if let Ok(exe) = std::env::current_exe() {
-                if let Some(parent) = exe.parent() {
-                    let check = parent.join("dist");
-                    if check.exists() {
-                        p = check;
-                    }
-                }
-            }
-        }
-        p
-    };
-
-    println!("Local Presentation Mode: Serving UI from {:?}", final_dist_dir);
-
-    // One more check to see if we're actually at the right place
-    if !final_dist_dir.join("index.html").exists() {
-        println!("WARNING: index.html not found in {:?}", final_dist_dir);
-    }
+    println!("Local Presentation Mode: serving UI from embedded frontend assets");
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     {
@@ -413,17 +408,13 @@ pub async fn start_http_server(app: tauri::AppHandle) -> Result<String, String> 
     }
 
     tokio::spawn(async move {
-        let index_path = final_dist_dir.join("index.html");
         let router = axum::Router::new()
             .nest_service("/uploads", ServeDir::new(uploads_dir))
             .nest_service("/separate", ServeDir::new(separate_dir))
             .nest_service("/library", ServeDir::new(library_dir))
             .route("/invoke", axum::routing::post(handle_http_invoke))
             .route("/api/ws", axum::routing::get(handle_local_ws))
-            .fallback_service(
-                ServeDir::new(&final_dist_dir)
-                    .fallback(ServeFile::new(index_path))
-            )
+            .fallback(serve_asset)
             .layer(CorsLayer::permissive())
             .with_state(app.clone());
 

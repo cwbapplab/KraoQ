@@ -1,5 +1,8 @@
 # KraoQ
 
+> [!WARNING]
+> **KraoQ is in an early alpha stage.** It is under active development, features may be incomplete or change without notice, and it has **not been tested on Linux or macOS** — Windows is currently the only supported and tested platform. Expect bugs, and use it at your own risk.
+
 KraoQ is a desktop karaoke app. Point it at a song and it downloads the audio, fetches its lyrics, removes the vocals with AI, and plays it back as a karaoke track with word-by-word, time-synced lyrics.
 
 It is a [Tauri](https://tauri.app) desktop application: a React front end, a Rust core, and a Python media/AI pipeline that the Rust core manages for you.
@@ -196,13 +199,82 @@ You should have received a copy of the GNU General Public License along with thi
 
 ---
 
-## Acknowledgements
+## Credits and licenses
 
-KraoQ builds on the work of others:
+KraoQ builds on the work of others. Every third-party dependency and bundled component, with the license it is distributed under, is listed below.
 
-- [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui) and its model authors for the separation models.
-- [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) for the separation pipeline.
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [ytmusicapi](https://github.com/sigma67/ytmusicapi) for media and metadata access.
-- [LRCLIB](https://lrclib.net) for the synced-lyrics fallback.
-- [stable-ts](https://github.com/jianfch/stable-ts), [PyTorch](https://pytorch.org), and [ONNX Runtime](https://onnxruntime.ai).
-- [Tauri](https://tauri.app), [React](https://react.dev), and [Vite](https://vitejs.dev) for the application shell.
+### Front end
+
+| Component | License | Project |
+| --- | --- | --- |
+| React / React DOM | MIT | <https://react.dev> |
+| Vite | MIT | <https://vitejs.dev> |
+| @vitejs/plugin-react | MIT | <https://github.com/vitejs/vite-plugin-react> |
+| Tailwind CSS | MIT | <https://tailwindcss.com> |
+| PostCSS | MIT | <https://postcss.org> |
+| Autoprefixer | MIT | <https://github.com/postcss/autoprefixer> |
+| Framer Motion | MIT | <https://www.framer.com/motion> |
+| lucide-react | ISC | <https://lucide.dev> |
+| qrcode.react | ISC | <https://github.com/zpao/qrcode.react> |
+| @tauri-apps/api | MIT OR Apache-2.0 | <https://github.com/tauri-apps/tauri> |
+| @tauri-apps/plugin-fs | MIT OR Apache-2.0 | <https://github.com/tauri-apps/plugins-workspace> |
+| @tauri-apps/cli | MIT OR Apache-2.0 | <https://github.com/tauri-apps/tauri> |
+
+### Desktop core (Rust)
+
+| Component | License | Project |
+| --- | --- | --- |
+| Tauri / tauri-build | MIT OR Apache-2.0 | <https://tauri.app> |
+| tauri-plugin-opener | MIT OR Apache-2.0 | <https://github.com/tauri-apps/plugins-workspace> |
+| tauri-plugin-fs | MIT OR Apache-2.0 | <https://github.com/tauri-apps/plugins-workspace> |
+| axum | MIT | <https://github.com/tokio-rs/axum> |
+| tokio | MIT | <https://tokio.rs> |
+| tokio-tungstenite | MIT | <https://github.com/snapview/tokio-tungstenite> |
+| tungstenite | MIT OR Apache-2.0 | <https://github.com/snapview/tungstenite-rs> |
+| futures-util | MIT OR Apache-2.0 | <https://github.com/rust-lang/futures-rs> |
+| tower-http | MIT | <https://github.com/tower-rs/tower-http> |
+| reqwest | MIT OR Apache-2.0 | <https://github.com/seanmonstar/reqwest> |
+| serde / serde_json | MIT OR Apache-2.0 | <https://serde.rs> |
+| rusqlite | MIT | <https://github.com/rusqlite/rusqlite> |
+| anyhow | MIT OR Apache-2.0 | <https://github.com/dtolnay/anyhow> |
+| zip | MIT | <https://github.com/zip-rs/zip2> |
+| urlencoding | MIT | <https://github.com/kornelski/rust_urlencoding> |
+| regex | MIT OR Apache-2.0 | <https://github.com/rust-lang/regex> |
+| local-ip-address | MIT OR Apache-2.0 | <https://github.com/EstebanBorai/local-ip-address> |
+
+### Relay server
+
+| Component | License | Project |
+| --- | --- | --- |
+| Express | MIT | <https://expressjs.com> |
+| ws | MIT | <https://github.com/websockets/ws> |
+| pg | MIT | <https://node-postgres.com> |
+| jsonwebtoken | MIT | <https://github.com/auth0/node-jsonwebtoken> |
+| bcryptjs | MIT | <https://github.com/dcodeIO/bcrypt.js> |
+| cors | MIT | <https://github.com/expressjs/cors> |
+| selfsigned | MIT | <https://github.com/jfromaniello/selfsigned> |
+
+### Media & AI pipeline (Python)
+
+| Component | License | Project |
+| --- | --- | --- |
+| yt-dlp | Unlicense | <https://github.com/yt-dlp/yt-dlp> |
+| ytmusicapi | MIT | <https://github.com/sigma67/ytmusicapi> |
+| python-audio-separator | MIT | <https://github.com/nomadkaraoke/python-audio-separator> |
+| stable-ts | MIT | <https://github.com/jianfch/stable-ts> |
+| requests | Apache-2.0 | <https://requests.readthedocs.io> |
+| mutagen | GPL-2.0-or-later | <https://github.com/quodlibet/mutagen> |
+| ONNX Runtime | MIT | <https://onnxruntime.ai> |
+| PyTorch | BSD-3-Clause | <https://pytorch.org> |
+
+### Bundled runtimes, tools, and data
+
+| Component | License | Project |
+| --- | --- | --- |
+| Python 3.11 | PSF-2.0 | <https://www.python.org> |
+| FFmpeg | LGPL-2.1-or-later / GPL-2.0-or-later | <https://ffmpeg.org> |
+| NVIDIA CUDA & runtime libraries | NVIDIA proprietary license | <https://developer.nvidia.com/cuda-toolkit> |
+| Ultimate Vocal Remover separation models | Per-model licenses | <https://github.com/Anjok07/ultimatevocalremovergui> |
+| LRCLIB | Open-source service (MIT) | <https://lrclib.net> |
+
+Full license texts for these components ship with their respective packages and are not bundled here. Where a project is dual-licensed, KraoQ uses it under the terms you prefer.
