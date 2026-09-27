@@ -20,6 +20,14 @@ It is a [Tauri](https://tauri.app) desktop application: a React front end, a Rus
 - **GPU acceleration** — optional NVIDIA CUDA acceleration with a self-diagnosing status panel and a one-click repair.
 - **Zero-config runtime** — Python, FFmpeg, and the AI models are downloaded and installed automatically on first run.
 
+<img width="1697" height="1290" alt="image" src="https://github.com/user-attachments/assets/4620926c-aa15-4879-9b48-2f67fb7de7c0" />
+<img width="1367" height="970" alt="image" src="https://github.com/user-attachments/assets/e9e29a7f-7292-487f-bf1f-bb47df5e6fe4" />
+<img width="1110" height="743" alt="image" src="https://github.com/user-attachments/assets/5b288892-80a5-41a4-87a4-b3b3aae41b78" />
+<img width="1665" height="1218" alt="image" src="https://github.com/user-attachments/assets/aa920fcc-ce63-4204-bbae-f4938ab557bd" />
+<img width="1695" height="1204" alt="image" src="https://github.com/user-attachments/assets/44ae2cb5-3b63-4cb3-9dbe-7ea7c3189823" />
+<img width="680" height="1769" alt="image" src="https://github.com/user-attachments/assets/0c5626f0-f8d6-4b17-a27e-afdd82ac033d" />
+<img width="2132" height="1759" alt="image" src="https://github.com/user-attachments/assets/0390e475-4cb5-4d00-8e9a-f93ffca15305" />
+
 ---
 
 ## How it works
