@@ -76,4 +76,4 @@ jobs:
 
             These builds are unsigned.
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-') }}
